@@ -435,6 +435,8 @@ const App = () => {
           onActiveJobChange={handleSetActiveJob}
           onOpenSetup={() => handleNavigate("setup")}
           onOpenLibrary={() => handleNavigate("library")}
+          onOpenDiff={() => handleNavigate("diff")}
+          outputFolder={outputFolder}
         />
       )
     }

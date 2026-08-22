@@ -120,7 +120,7 @@ flowchart LR
 | `src/features/library/` | Loaded Jobs + dbl-click → Wizard/Manual modal |
 | `src/features/editor/` | Manual Editor |
 | `src/features/calibration/` | Manual fit UI + Guided wizard + gate storage |
-| `src/features/transform/` | Transfer / Mirror / **Single-side mirror** / Offset + flip assist demos |
+| `src/features/transform/` | Transfer / Mirror / **Single-side mirror** / Offset + flip assist; **Preview → Write to output folder** (`writeOutputFile`, edit-write gate) |
 | `src/features/diff/` | Unified diff, dry-run, write, USB export hook |
 | `src/features/export/UsbExportPanel.tsx` | Removable drive export from output |
 | `src/assets/flip-assist.png` | Dual-station Flip assist diagram |
@@ -315,7 +315,7 @@ YMConnect is **not** this protocol — `ymconnect_convert_position` / `src/lib/k
 | `library` | Loaded Jobs | Dbl-click → choose Wizard or Manual Editor |
 | `editor` | Manual Editor | Full line/speed/weld/CND tooling |
 | `calibration` | Calibration | Manual + Guided; export `CAL_<id>_STANDARD/RELATIVE.JBI` |
-| `transform` | Transform | Modes: **Transfer** \| **Mirror** \| **Single-side mirror** \| **Offset** + flip assist (dual or left/right assets) |
+| `transform` | Transform | Modes: **Transfer** \| **Mirror** \| **Single-side mirror** \| **Offset** + flip assist; after Preview → rename optional → **Write to output folder** (gate + `writeOutputFile`) |
 | `diff` | Diff | Preview / dry-run / write / USB |
 | `setup` | Setup Guide | Forced until min complete |
 
@@ -349,8 +349,8 @@ Wizard mirror/offset intents navigate to Transform (geometry lives there).
 
 1. **Byte-identical roundtrip** of fixtures + DYNAMIC1 (~305) after parse/serialize changes (local backup).
 2. **No** `MOVL … V= … VJ=…` (or V on MOVJ / VJ on linear) — sanitize + tests.
-3. **Calibration gate** before transforms and Diff/Wizard writes; Library read-only browse OK.
-4. **Output-only** FS writes; source folder never destination.
+3. **Calibration gate** before transforms and Diff/Wizard/**Transform** writes; Library read-only browse OK.
+4. **Output-only** FS writes; source folder never destination. Transform Save uses the same `writeOutputFile` path as Diff/Wizard.
 5. **Preserve `raw`** fields for lossless serialize unless intentionally rewriting.
 6. **Motoman theme tokens** in `index.css` — prefer `bg-bg`, `text-accent`, `btn-primary`, etc. over ad-hoc zinc/amber.
 7. **Kin protocol 1.0.0** camelCase — TS ↔ Python stay aligned.
@@ -422,7 +422,7 @@ After changes, run the smallest sufficient set:
 
 ## Status snapshot (2026-08-22)
 
-**Done:** Tauri scaffold; lossless JBI; library; Manual Editor + edit tests; Wizard; Diff/USB; multi-profile + ProfileGate + forced Setup; calibration UI + gate with **home-anchored ± safe joint limits** (CAL STANDARD/RELATIVE); Transform transfer/mirror/**single-side mirror**/offset (+100 X fixture) + flip assist; `fixtures/transform/`; kin sidecar FK/calib/transform/profile; YMConnect stub; MotoROS2 setup prefs; `start.bat`/`stop.bat`; GitHub repo `icors2/Yaskawa-Job-Helper`.
+**Done:** Tauri scaffold; lossless JBI; library; Manual Editor + edit tests; Wizard; Diff/USB; multi-profile + ProfileGate + forced Setup; calibration UI + gate with **home-anchored ± safe joint limits** (CAL STANDARD/RELATIVE); Transform transfer/mirror/**single-side mirror**/offset (+100 X fixture) + flip assist + **save previewed `.JBI` to output folder**; `fixtures/transform/`; kin sidecar FK/calib/transform/profile; YMConnect stub; MotoROS2 setup prefs; `start.bat`/`stop.bat`; GitHub repo `icors2/Yaskawa-Job-Helper`.
 
 **Not done:** live YMConnect cell; MotoROS2 ingest; bulk conversion import; full CALL auto-rewire; non-6-axis DH; calibrated pulse-axis mirror signs; **re-validate mirror/shift on real cartesian production jobs** (TODO).
 

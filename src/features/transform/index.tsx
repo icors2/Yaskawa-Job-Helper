@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react"
-import { getCalibrationGate } from "../calibration"
+import { getCalibrationGate, getEditWriteGate } from "../calibration"
 import {
   previewFrameMove,
   previewMirrorJob,
   previewOffsetJob,
   type StationSide
 } from "../../lib/jbi/frameTransform"
-import { readTextFile, type JbiEntry } from "../../lib/fs/desktop"
+import { readTextFile, writeOutputFile, type JbiEntry } from "../../lib/fs/desktop"
 import type { MirrorPlane } from "../../lib/kin/client"
 import { getActiveProfile, getRobotInstallGate } from "../../lib/robot/profile"
 import {
@@ -26,6 +26,8 @@ import { FlipAssistDemo } from "./FlipAssistDemo"
  *
  * Single-side mirror keeps the same ///USER and reflects in that frame.
  * Prefer cartesian USER/BASE (or PULSE→FK→USER). Pulse-axis flips are advanced/approximate.
+ *
+ * After Preview, Write to output folder uses writeOutputFile (output tree only; never source).
  */
 
 type TransformMode = "mirror" | "transfer" | "offset" | "singleSide"
@@ -36,6 +38,8 @@ interface TransformPageProps {
   onActiveJobChange?: (path: string | null) => void
   onOpenSetup?: () => void
   onOpenLibrary?: () => void
+  onOpenDiff?: () => void
+  outputFolder?: string | null
 }
 
 const jobBaseName = (path: string): string => {
@@ -43,12 +47,47 @@ const jobBaseName = (path: string): string => {
   return parts[parts.length - 1] || path
 }
 
+const jobStem = (pathOrName: string): string =>
+  jobBaseName(pathOrName).replace(/\.jbi$/i, "")
+
+const ensureJbiExtension = (name: string): string => {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    return trimmed
+  }
+  return trimmed.toLowerCase().endsWith(".jbi") ? trimmed : `${trimmed}.JBI`
+}
+
+const deriveOutName = (args: {
+  mode: TransformMode
+  sourceLabel: string
+  targetFrameId: number
+  mirrorPlane: MirrorPlane
+  singleSidePlane: MirrorPlane
+  stationSide: StationSide
+}): string => {
+  const stem = jobStem(args.sourceLabel) || "TRANSFORM"
+  if (args.mode === "transfer") {
+    return `${stem}_UF${args.targetFrameId}.JBI`
+  }
+  if (args.mode === "mirror") {
+    return `${stem}_M${args.mirrorPlane}.JBI`
+  }
+  if (args.mode === "singleSide") {
+    const side = args.stationSide === "left" ? "L" : "R"
+    return `${stem}_SSM_${side}.JBI`
+  }
+  return `${stem}_OFF.JBI`
+}
+
 export const TransformPage = ({
   jobs = [],
   activeJobPath = null,
   onActiveJobChange,
   onOpenSetup,
-  onOpenLibrary
+  onOpenLibrary,
+  onOpenDiff,
+  outputFolder = null
 }: TransformPageProps) => {
   const [mode, setMode] = useState<TransformMode>("transfer")
   const [jobPath, setJobPath] = useState(activeJobPath ?? "")
@@ -61,6 +100,7 @@ export const TransformPage = ({
   const [offsetText, setOffsetText] = useState("0,0,0,0,0,0")
   const [preview, setPreview] = useState("")
   const [diffText, setDiffText] = useState("")
+  const [outName, setOutName] = useState("")
   const [status, setStatus] = useState(
     "Pick a Loaded Job (or inherit the Wizard selection), choose an operation, then preview."
   )
@@ -79,7 +119,9 @@ export const TransformPage = ({
   })
 
   const installGate = getRobotInstallGate()
+  const writeGate = getEditWriteGate()
   const activeProfile = getActiveProfile()
+  const canSave = Boolean(preview.trim()) && writeGate.allowed
 
   const handleJobPickerToggle = (
     event: SyntheticEvent<HTMLDetailsElement>
@@ -125,11 +167,27 @@ export const TransformPage = ({
 
   const demoPlane = mode === "singleSide" ? singleSidePlane : mirrorPlane
 
+  const clearPreview = () => {
+    setPreview("")
+    setDiffText("")
+    setOutName("")
+    setRconfReview(false)
+  }
+
+  const suggestedOutName = (label?: string): string =>
+    deriveOutName({
+      mode,
+      sourceLabel: label ?? displayName ?? jobPath,
+      targetFrameId,
+      mirrorPlane,
+      singleSidePlane,
+      stationSide
+    })
+
   const handleSelectJob = (path: string) => {
     setJobPath(path)
     onActiveJobChange?.(path)
-    setPreview("")
-    setDiffText("")
+    clearPreview()
     setStatus(`Transforming: ${jobBaseName(path)}`)
   }
 
@@ -156,9 +214,7 @@ export const TransformPage = ({
 
   const handleSelectMode = (next: TransformMode) => {
     setMode(next)
-    setPreview("")
-    setDiffText("")
-    setRconfReview(false)
+    clearPreview()
     setUsePulseAxisFlips(false)
     if (next === "mirror") {
       setStatus("Mirror mode — reflection across the chosen plane; review RCONF on the pendant.")
@@ -177,6 +233,12 @@ export const TransformPage = ({
       return
     }
     setStatus("Offset mode — apply a cartesian delta sample (preview).")
+  }
+
+  const applyPreviewResult = (after: string, nextDiff: string, nextOutName: string) => {
+    setPreview(after)
+    setDiffText(nextDiff)
+    setOutName(nextOutName)
   }
 
   const handlePulsePrefsChange = (next: PulseMirrorPrefs) => {
@@ -204,11 +266,11 @@ export const TransformPage = ({
         targetFrameId,
         sourceLabel: jobPath
       })
-      setPreview(result.after)
-      setDiffText(result.diffText)
+      const nextOut = suggestedOutName()
+      applyPreviewResult(result.after, result.diffText, nextOut)
       setRconfReview(false)
       setStatus(
-        `Transfer preview ready: ///USER ${sourceFrameId} → ${targetFrameId} (${result.poseCount} poses). Identical-fixture path — relative weld geometry unchanged. Diff is mandatory before write.`
+        `Transfer preview ready: ///USER ${sourceFrameId} → ${targetFrameId} (${result.poseCount} poses). Review the diff, then Write to output folder as ${nextOut}.`
       )
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
@@ -227,11 +289,11 @@ export const TransformPage = ({
         sourceFrameId,
         sourceLabel: jobPath
       })
-      setPreview(mirrored.after)
-      setDiffText(mirrored.diffText)
+      const nextOut = suggestedOutName()
+      applyPreviewResult(mirrored.after, mirrored.diffText, nextOut)
       setRconfReview(mirrored.rconfReviewRequired)
       setStatus(
-        `Mirror ${mirrorPlane} for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s) reflected. RCONF review required on pendant. Diff is mandatory before write.`
+        `Mirror ${mirrorPlane} for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s) reflected. RCONF review required on pendant. Review the diff, then Write to output folder as ${nextOut}.`
       )
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
@@ -253,15 +315,15 @@ export const TransformPage = ({
         usePulseAxisFlips: usePulseAxisFlips && pulsePrefs.advancedEnabled,
         pulseAxisSigns: pulsePrefs.signs
       })
-      setPreview(mirrored.after)
-      setDiffText(mirrored.diffText)
+      const nextOut = suggestedOutName()
+      applyPreviewResult(mirrored.after, mirrored.diffText, nextOut)
       setRconfReview(mirrored.rconfReviewRequired)
       const sideLabel = stationSide === "left" ? "Left" : "Right"
       const pathNote = mirrored.usedPulseAxisFlips
         ? " ADVANCED pulse-axis flips used — approximate; calibrate signs for this cell before production."
         : " Same ///USER retained (cartesian preferred)."
       setStatus(
-        `Single-side mirror (${sideLabel}, ${singleSidePlane}) for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s).${pathNote} RCONF review required. Diff is mandatory before write.`
+        `Single-side mirror (${sideLabel}, ${singleSidePlane}) for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s).${pathNote} RCONF review required. Review the diff, then Write to output folder as ${nextOut}.`
       )
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
@@ -280,11 +342,40 @@ export const TransformPage = ({
         sourceFrameId,
         sourceLabel: jobPath
       })
-      setPreview(result.after)
-      setDiffText(result.diffText)
+      const nextOut = suggestedOutName()
+      applyPreviewResult(result.after, result.diffText, nextOut)
       setRconfReview(false)
       setStatus(
-        `Offset preview for ${displayName ?? jobPath}: ${result.poseCount} pose(s) shifted. Diff is mandatory before write.`
+        `Offset preview for ${displayName ?? jobPath}: ${result.poseCount} pose(s) shifted. Review the diff, then Write to output folder as ${nextOut}.`
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const handleSave = async () => {
+    if (!preview.trim()) {
+      setStatus("Run Preview first — Save stays disabled until a transform preview exists.")
+      return
+    }
+    if (!writeGate.allowed) {
+      setStatus(writeGate.reason)
+      return
+    }
+    if (!outputFolder) {
+      setStatus("Set an output folder before writing (Setup Guide or header).")
+      return
+    }
+    const name = ensureJbiExtension(outName.trim() || suggestedOutName())
+    if (!name) {
+      setStatus("Enter an output file name before writing.")
+      return
+    }
+    try {
+      const written = await writeOutputFile(name, preview)
+      setOutName(name)
+      setStatus(
+        `Wrote ${written} (output folder only — source backup untouched).`
       )
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error))
@@ -309,7 +400,8 @@ export const TransformPage = ({
           <span className="text-fg/90">Mirror</span> (mirrored fixtures across stations),{" "}
           <span className="text-fg/90">Single-side mirror</span> (same ///USER / same station), and{" "}
           <span className="text-fg/90">Offset</span>. Prefer cartesian USER/BASE jobs for mirrors.
-          Uses the <span className="text-fg/80">active robot profile</span>.
+          Preview, then <span className="text-fg/90">Write to output folder</span> (never the source
+          backup). Uses the <span className="text-fg/80">active robot profile</span>.
         </p>
         {!installGate.allowed ? (
           <p className="mt-2 rounded border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-accent-fg" role="status">
@@ -738,6 +830,59 @@ export const TransformPage = ({
       <p className="text-sm text-fg/80" role="status">
         {status}
         {rconfReview ? " RCONF must be reviewed on the pendant after mirror." : ""}
+      </p>
+
+      {!writeGate.allowed ? (
+        <p
+          className="rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn"
+          role="status"
+        >
+          {writeGate.reason}
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-sm text-fg/80">
+          Output file name
+          <input
+            aria-label="Transform output file name"
+            className="rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-sm"
+            value={outName}
+            onChange={(event) => setOutName(event.target.value)}
+            disabled={!preview}
+            placeholder={preview ? suggestedOutName() : "Run Preview first"}
+          />
+        </label>
+        <button
+          type="button"
+          aria-label="Write transformed job to output folder"
+          onClick={() => void handleSave()}
+          disabled={!canSave}
+          className="btn-primary"
+        >
+          Write to output folder
+        </button>
+        {onOpenDiff ? (
+          <button
+            type="button"
+            aria-label="Open Diff page"
+            onClick={onOpenDiff}
+            className="btn-secondary"
+          >
+            Open Diff
+          </button>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted">
+        Writes use the active profile output folder
+        {outputFolder ? (
+          <>
+            : <span className="font-mono text-fg/80">{outputFolder}</span>
+          </>
+        ) : (
+          " (not set yet)"
+        )}
+        . Source backup stays read-only. Save is disabled until Preview succeeds.
       </p>
 
       {diffText ? (
