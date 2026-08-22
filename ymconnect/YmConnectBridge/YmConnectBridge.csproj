@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>YmConnectBridge</RootNamespace>
+    <AssemblyName>YmConnectBridge</AssemblyName>
+  </PropertyGroup>
+  <!--
+    After installing YMConnect from https://github.com/Yaskawa-Global/YMConnect/releases
+    add a PackageReference or Reference to the YMConnect assemblies, then implement
+    ConvertPosition in Program.cs (set SdkLinked = true).
+  -->
+</Project>

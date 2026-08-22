@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+/*
+  Motoman / Yaskawa–inspired industrial theme (not official brand assets).
+  Live motoman.com leads with Yaskawa Blue (#0056ba) + navy (#002e5e) on white.
+  This desktop tool uses a dark chassis with Motoman-inspired industrial red
+  accents for OEM / pendant-like contrast.
+*/
+
+@theme {
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+
+  --color-bg: #0b0c0f;
+  --color-surface: #14161a;
+  --color-surface-2: #1c1f25;
+  --color-border: #2c3038;
+  --color-border-strong: #3a404a;
+  --color-fg: #f0f1f3;
+  --color-muted: #9b9fa8;
+  --color-muted-2: #6d7380;
+  --color-accent: #c8102e;
+  --color-accent-hover: #a50d26;
+  --color-accent-soft: #e8455a;
+  --color-accent-fg: #ffe0e4;
+  --color-success: #2d9f6f;
+  --color-warn: #c9a227;
+  --color-danger: #e11d48;
+  --color-brand-navy: #002e5e;
+  --color-brand-blue: #0056ba;
+}
+
+:root {
+  --app-bg: #0b0c0f;
+  --app-surface: #14161a;
+  --app-surface-2: #1c1f25;
+  --app-border: #2c3038;
+  --app-border-strong: #3a404a;
+  --app-text: #f0f1f3;
+  --app-muted: #9b9fa8;
+  --app-muted-2: #6d7380;
+  --app-accent: #c8102e;
+  --app-accent-hover: #a50d26;
+  --app-accent-soft: #e8455a;
+  --app-accent-fg: #ffe0e4;
+  --app-success: #2d9f6f;
+  --app-warn: #c9a227;
+  --app-danger: #e11d48;
+  --app-brand-navy: #002e5e;
+  --app-brand-blue: #0056ba;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@layer components {
+  .page-shell {
+    @apply flex h-full flex-col gap-4 overflow-auto p-6;
+  }
+
+  .panel {
+    @apply rounded border border-border bg-surface/50;
+  }
+
+  .panel-inset {
+    @apply rounded border border-border bg-bg/60;
+  }
+
+  .input-field {
+    @apply rounded border border-border-strong bg-bg px-2 py-1.5 text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
+  }
+
+  .btn-primary {
+    @apply rounded border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:ring-offset-1 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-2 disabled:text-muted-2;
+  }
+
+  .btn-secondary {
+    @apply rounded border border-border-strong bg-surface-2 px-3 py-1.5 text-sm font-medium text-fg hover:border-muted hover:bg-border focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:ring-offset-1 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-ghost {
+    @apply rounded border border-border-strong px-3 py-1.5 text-sm text-muted hover:border-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:ring-offset-1 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-accent-soft {
+    @apply rounded border border-accent/70 bg-accent/15 px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:ring-offset-1 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:ring-offset-1 focus-visible:ring-offset-bg;
+  }
+
+  .brand-bar {
+    @apply h-1 w-full bg-accent;
+  }
+}

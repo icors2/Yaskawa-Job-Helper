@@ -1,0 +1,55 @@
+RC.PRM ///RC1G geometry hypothesis
+==================================
+
+Source: Yaskawa Jobs/DYNAMIC1/RC.PRM
+  ///RC1G row 1: 200,150000,0,760000,0,200000,0,0,1082000,0
+  ///RC1G row 2: 0,0,100000,0,0,0,0,0,0,0
+
+Hypothesis: those integers are microns, i.e. 150 / 760 / 200 / 1082 mm
+(and 100 mm on the next row).
+
+Verdict: HOLDS.
+
+Evidence
+--------
+1. The decoded lengths match the published AR2010 drawing and the
+   ros-industrial motoman_ar2010 URDF exactly:
+     a1 = 150 mm   (S-axis horizontal offset)
+     a2 = 760 mm   (L-arm)
+     a3 = 200 mm   (U-axis offset)
+     d4 = 1082 mm  (upper arm to wrist)
+     d6 = 100 mm   (wrist to flange / P-point)
+2. Forward kinematics using those lengths, the ROS AR2010 joint chain,
+   TOOL.CND tool 0, and pulse-per-degree taken from RC.PRM pulse limits
+   reproduces every UFRAME.CND BUSER origin from its RORG pulses to
+   better than 0.01 mm (REAMER / S1 / S2).
+3. The same model maps the recurring home pulses
+   (0, -75310, 1200, 0, -127658, -70)
+   to about (275.0, -0.74, 875.0, 180, 45, 0). The JBI cartesian twin
+   writes Y=0.000; the 0.7 mm Y gap is the tool-0 Y of +0.981 mm, which
+   S=0 cannot cancel. That point is an idealized BASE pose, not a
+   measured pulse/cartesian pair.
+
+What the first 200 is not
+-------------------------
+RC1G[0] = 200 would be 0.2 mm if it were microns. It is not a primary
+link. The 505 mm floor-to-S height is also absent from this row:
+Yaskawa BASE is the S/L intersection, so d1 = 0 in controller
+coordinates. 505 mm appears only as the ROS base_link height.
+
+Pulse conversion
+----------------
+RC.PRM pulse soft-limits (same file, later in ///RC1G):
+  +241449, +295690, +254863, +204573, +147036, +206914
+  -241449, -200306, -136989, -204573, -147036, -206914
+
+Divided by the motion ranges that make pulses/deg constant:
+  S ±180, L +155/−105, U +160/−86, R ±200, B ±150, T ±455
+gives the seed scales used by ar2010.default_params().
+S/L/U match the US datasheet. R/B/T match the expanded wrist ranges
+(also printed on some AR2010 sheets). The US URDF limits
+(R ±150, B +90/−135, T ±210) do not fit these pulse numbers.
+
+least_squares can still nudge the six scales and the six pulse offsets.
+On the backup anchors the seed model is already within 1 mm, so the
+fit is a refinement, not a rescue.
