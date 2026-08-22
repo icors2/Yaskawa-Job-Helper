@@ -1,6 +1,8 @@
-# Yaskawa Job Editor
+# Yaskawa Job Helper
 
 Windows desktop app for YRC1000 `.JBI` jobs. Source folders are read-only; writes go only to a user-chosen output folder.
+
+**Repository:** https://github.com/icors2/Yaskawa-Job-Helper
 
 Requires Python 3.14, Node 24, and Rust (cargo) on the PATH.
 
