@@ -36,15 +36,63 @@ if (-not $SkipKin) {
   if (-not $py) { throw "Python not found - required to bundle yaskawa-kin.exe" }
 
   New-Item -ItemType Directory -Force -Path $KinDist | Out-Null
-  & $py.Source -m PyInstaller `
-    --noconfirm `
-    --onefile `
-    --name yaskawa-kin `
-    --distpath $KinDist `
-    --workpath (Join-Path $KinDist "work") `
-    --specpath (Join-Path $KinDist "spec") `
-    (Join-Path $Root "kinematics\server.py")
-  if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed - pip install pyinstaller" }
+  $KinDir = Join-Path $Root "kinematics"
+  # Local modules live beside server.py; without --paths PyInstaller omits them
+  # and the onefile exe crashes with ModuleNotFoundError (e.g. ar2010).
+  $Hidden = @(
+    "ar2010",
+    "calibrate",
+    "cnd",
+    "robot_model",
+    "robot_profile",
+    "frame_flip",
+    "transform",
+    "numpy",
+    "scipy",
+    "scipy.optimize"
+  )
+  $PyArgs = @(
+    "-m", "PyInstaller",
+    "--noconfirm",
+    "--onefile",
+    "--name", "yaskawa-kin",
+    "--paths", $KinDir,
+    "--distpath", $KinDist,
+    "--workpath", (Join-Path $KinDist "work"),
+    "--specpath", (Join-Path $KinDist "spec"),
+    "--collect-submodules", "numpy",
+    "--collect-submodules", "scipy"
+  )
+  foreach ($mod in $Hidden) {
+    $PyArgs += @("--hidden-import", $mod)
+  }
+  $PyArgs += (Join-Path $KinDir "server.py")
+  & $py.Source @PyArgs
+  if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed - pip install pyinstaller numpy scipy" }
+
+  $KinExeSmoke = Join-Path $KinDist "yaskawa-kin.exe"
+  Write-Host "    Smoke-testing yaskawa-kin.exe..." -ForegroundColor DarkGray
+  $smokeScript = Join-Path $KinDist "smoke_kin.py"
+  @"
+import json, subprocess, sys
+exe = sys.argv[1]
+p = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+out, err = p.communicate(json.dumps({"type": "ping", "id": "smoke"}) + "\n", timeout=90)
+line = (out or "").splitlines()[0] if out else ""
+if not line:
+    sys.stderr.write(err or "no stdout from yaskawa-kin.exe")
+    sys.exit(1)
+data = json.loads(line)
+if data.get("ok") is not True:
+    sys.stderr.write("ping failed: " + line[:500] + "\n" + (err or ""))
+    sys.exit(1)
+print("kin smoke ok")
+"@ | Set-Content -Encoding UTF8 $smokeScript
+  & $py.Source $smokeScript $KinExeSmoke
+  if ($LASTEXITCODE -ne 0) {
+    throw "yaskawa-kin.exe smoke test failed - local modules or numpy/scipy not bundled"
+  }
+  Remove-Item -Force $smokeScript -ErrorAction SilentlyContinue
 } else {
   Write-Host "[2/4] Skipping PyInstaller" -ForegroundColor DarkGray
 }
