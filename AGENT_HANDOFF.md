@@ -51,6 +51,7 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 | Action | Command |
 | --- | --- |
 | Start | `start.bat` → `npm run dev` (Tauri+Vite); PID in `.dev.pids`; optional `--install` |
+| Portable USB | `Build-Portable-USB.bat` → `portable/YaskawaJobEditor/`; `Install-Portable-to-D.bat` copies to `D:\YaskawaJobEditor\`. Sidecar prefers `yaskawa-kin.exe` beside the app exe. |
 | Stop | `stop.bat` → kill tree from `.dev.pids`, then path-matched node/vite/tauri/cargo |
 | Dev port | **1420** (`vite.config.ts` `strictPort`); HMR 1421 if `TAURI_DEV_HOST` |
 | Vite-only | `npm run dev:vite` (no FS/sidecar) |
@@ -179,6 +180,7 @@ flowchart LR
 | `docs/MOTOMAN_DEVELOPER_FINDINGS.md` | Portal / INFORM / YMConnect research |
 | `docs/MOTOROS2.md` | MotoROS2 adopt vs ignore |
 | `start.bat` / `stop.bat` | Windows launchers |
+| `Build-Portable-USB.bat` / `Install-Portable-to-D.bat` | Portable USB package + copy to `D:\` |
 
 ---
 

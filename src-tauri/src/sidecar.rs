@@ -55,17 +55,67 @@ pub struct SidecarStore {
     inner: Mutex<Option<KinSidecar>>,
 }
 
+fn exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 fn server_script() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // Dev tree (cargo / tauri dev)
+    let from_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("kinematics")
-        .join("server.py")
+        .join("server.py");
+    if from_manifest.exists() {
+        return from_manifest;
+    }
+    // Portable layout: kinematics/server.py next to the app exe
+    exe_dir().join("kinematics").join("server.py")
+}
+
+fn portable_kin_exe() -> Option<PathBuf> {
+    let dir = exe_dir();
+    for name in ["yaskawa-kin.exe", "yaskawa-kin"] {
+        let candidate = dir.join(name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn spawn_kin_binary(bin: &PathBuf) -> Result<KinSidecar, String> {
+    let mut child = Command::new(bin)
+        .env("PYTHONUNBUFFERED", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("spawn {}: {err}", bin.display()))?;
+    let stdin = child.stdin.take().ok_or("sidecar stdin missing")?;
+    let stdout = child.stdout.take().ok_or("sidecar stdout missing")?;
+    Ok(KinSidecar {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+    })
 }
 
 fn start_sidecar() -> Result<KinSidecar, String> {
+    // 1) Portable USB / release: bundled PyInstaller binary next to the app
+    if let Some(bin) = portable_kin_exe() {
+        return spawn_kin_binary(&bin);
+    }
+
+    // 2) Dev: python + server.py
     let script = server_script();
     if !script.exists() {
-        return Err(format!("missing sidecar script: {}", script.display()));
+        return Err(format!(
+            "missing kinematics sidecar (no yaskawa-kin.exe beside the app, and no {})",
+            script.display()
+        ));
     }
     match KinSidecar::spawn("python", &script) {
         Ok(sidecar) => Ok(sidecar),

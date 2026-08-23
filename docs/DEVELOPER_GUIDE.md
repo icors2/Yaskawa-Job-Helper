@@ -57,6 +57,47 @@ Production build:
 npm run build
 ```
 
+## Portable USB app (no Node/Python on the target PC)
+
+Build **once** on a machine that has Node, Rust, and Python. The locked shop PC only needs the resulting folder on a USB stick (e.g. `D:\`).
+
+### Build the portable package
+
+```bat
+cd yaskawa-job-editor
+pip install pyinstaller
+Build-Portable-USB.bat
+```
+
+Or:
+
+```bat
+npm run build:portable
+```
+
+Output folder: `portable\YaskawaJobEditor\` containing:
+
+- `Yaskawa Job Editor.exe`
+- `yaskawa-kin.exe` (kinematics; no system Python required)
+- `Run.bat`
+- `README-PORTABLE.txt`
+
+### Copy onto D:\ (USB)
+
+```bat
+Install-Portable-to-D.bat
+```
+
+Or another drive letter:
+
+```bat
+powershell -File scripts\Install-Portable-to-Drive.ps1 -Drive E
+```
+
+That creates `D:\YaskawaJobEditor\` (or `E:\...`). On the locked PC, open that folder and double-click **Run.bat**.
+
+**Notes:** Windows 10/11 + WebView2 required (usually already present). IT may still block EXE from removable drives. Prefer putting edited-job output folders on the USB as well. Profile prefs may still live under the Windows user AppData on that PC.
+
 ## First-run: robot profile + forced setup
 
 On every app session a **blocking “Choose robot profile”** screen appears before main chrome.

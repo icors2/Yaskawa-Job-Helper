@@ -42,6 +42,9 @@ dist-kin/
 *.spec
 warn-yaskawa-kin.txt
 
+# Portable USB package output (rebuild with Build-Portable-USB.bat)
+portable/
+
 # Dev launcher PID file (start.bat / stop.bat)
 .dev.pids
 

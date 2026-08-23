@@ -8,6 +8,8 @@
     "dev:vite": "vite",
     "build": "tauri build",
     "build:web": "tsc && vite build",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
+    "install:portable:d": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Install-Portable-to-Drive.ps1 -Drive D",
     "preview": "vite preview",
     "tauri": "tauri",
     "kin": "python kinematics/server.py",
