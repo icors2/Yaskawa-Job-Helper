@@ -27,6 +27,7 @@ export type KinMethod =
   | "transform_frame"
   | "transform_mirror"
   | "transform_offset"
+  | "transform_frame_flip"
   | "read_uframe"
   | "read_tool"
   | "scan_backup"
@@ -171,6 +172,20 @@ export interface TransformOffsetRequest {
   delta: CartesianPose
 }
 
+export interface TransformFrameFlipRequest {
+  id: string
+  type: "transform_frame_flip"
+  poses: CartesianPose[]
+  /** Explicit BUSER of current UF (preferred when UI overrides). */
+  sourceUf?: CartesianPose
+  /** Explicit BUSER of target UF. */
+  targetUf?: CartesianPose
+  sourceFrameId?: number
+  targetFrameId?: number
+  /** Default true — tool Z 180° like Flip.py. */
+  applyToolZFlip?: boolean
+}
+
 export interface ReadUframeRequest {
   id: string
   type: "read_uframe"
@@ -217,6 +232,7 @@ export type KinRequest =
   | TransformFrameRequest
   | TransformMirrorRequest
   | TransformOffsetRequest
+  | TransformFrameFlipRequest
   | ReadUframeRequest
   | ReadToolRequest
   | ScanBackupRequest
@@ -254,6 +270,14 @@ export interface TransformMirrorResult {
 
 export interface TransformOffsetResult {
   poses: CartesianPose[]
+}
+
+export interface TransformFrameFlipResult {
+  poses: CartesianPose[]
+  targetFrameId: number | null
+  applyToolZFlip: boolean
+  sourceUf: CartesianPose
+  targetUf: CartesianPose
 }
 
 export interface ReadUframeResult {
@@ -358,6 +382,12 @@ export const transformOffset = (
   body: Omit<TransformOffsetRequest, "id" | "type">
 ): Promise<TransformOffsetResult> => {
   return kinRequest<TransformOffsetResult>({ type: "transform_offset", ...body })
+}
+
+export const transformFrameFlip = (
+  body: Omit<TransformFrameFlipRequest, "id" | "type">
+): Promise<TransformFrameFlipResult> => {
+  return kinRequest<TransformFrameFlipResult>({ type: "transform_frame_flip", ...body })
 }
 
 export const readUframe = (path: string): Promise<ReadUframeResult> => {

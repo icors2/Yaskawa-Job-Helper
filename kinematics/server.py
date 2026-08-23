@@ -6,8 +6,9 @@ Field names are camelCase so they match src/lib/kin/client.ts.
 
 Request types:
   ping, forward_kinematics, calibrate, transform_frame,
-  transform_mirror, transform_offset, read_uframe, read_tool,
-  scan_backup, create_profile_from_backup, load_profile, get_profile
+  transform_mirror, transform_offset, transform_frame_flip,
+  read_uframe, read_tool, scan_backup, create_profile_from_backup,
+  load_profile, get_profile
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from robot_profile import (
     save_profile_json,
     scan_backup,
 )
+from frame_flip import convert_poses
 from transform import (
     frame_move,
     mirror,
@@ -63,6 +65,8 @@ METHODS = (
     "mirror",
     "transform_offset",
     "offset",
+    "transform_frame_flip",
+    "frame_flip",
     "read_uframe",
     "read_tool",
     "verify_rcprm",
@@ -244,6 +248,46 @@ def handle_transform_offset(req: dict[str, Any]) -> dict[str, Any]:
     delta = _pose_from(req["delta"])
     poses = [offset_pose(_pose_from(item), delta).to_dict() for item in req["poses"]]
     return ok(req["id"], {"poses": poses})
+
+
+def _resolve_uf_pose(req: dict[str, Any], pose_key: str, frame_id_key: str) -> Pose:
+    """Prefer explicit BUSER pose dict; else look up frame id from loaded UFRAME.CND."""
+    if pose_key in req and req[pose_key] is not None:
+        return _pose_from(req[pose_key])
+    if frame_id_key in req and req[frame_id_key] is not None:
+        return STATE.frame_pose(int(req[frame_id_key]))
+    raise ValueError(f"provide {pose_key} (BUSER XYZRxRyRz) or {frame_id_key}")
+
+
+def handle_transform_frame_flip(req: dict[str, Any]) -> dict[str, Any]:
+    """Homogeneous UF convert: P_new = inv(UF_new) @ UF_old @ P_old (+ optional tool Z flip)."""
+    require(req, "poses")
+    uf_old = _resolve_uf_pose(req, "sourceUf", "sourceFrameId")
+    uf_new = _resolve_uf_pose(req, "targetUf", "targetFrameId")
+    apply_flip = req.get("applyToolZFlip", req.get("apply_tool_z_flip", True))
+    if isinstance(apply_flip, str):
+        apply_flip = apply_flip.strip().lower() not in ("0", "false", "no", "off")
+    converted = convert_poses(
+        [_pose_from(item) for item in req["poses"]],
+        uf_old,
+        uf_new,
+        apply_tool_z_flip=bool(apply_flip),
+    )
+    target_id = req.get("targetFrameId")
+    return ok(
+        req["id"],
+        {
+            "poses": [pose.to_dict() for pose in converted],
+            "targetFrameId": int(target_id) if target_id is not None else None,
+            "applyToolZFlip": bool(apply_flip),
+            "sourceUf": uf_old.to_dict(),
+            "targetUf": uf_new.to_dict(),
+        },
+    )
+
+
+def handle_frame_flip_alias(req: dict[str, Any]) -> dict[str, Any]:
+    return handle_transform_frame_flip(req)
 
 
 def handle_read_uframe(req: dict[str, Any]) -> dict[str, Any]:
@@ -494,6 +538,8 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "mirror": handle_mirror_alias,
     "transform_offset": handle_transform_offset,
     "offset": handle_offset_alias,
+    "transform_frame_flip": handle_transform_frame_flip,
+    "frame_flip": handle_frame_flip_alias,
     "read_uframe": handle_read_uframe,
     "read_tool": handle_read_tool,
     "verify_rcprm": handle_verify_rcprm,

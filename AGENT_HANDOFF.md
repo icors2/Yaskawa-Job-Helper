@@ -22,7 +22,7 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 | Nav / chrome / gates | `src/App.tsx`, `src/components/Sidebar.tsx`, `src/lib/setup/progress.ts` |
 | Parse / serialize | `src/lib/jbi/parse.ts`, `serialize.ts`, `model.ts` |
 | Speeds / weld / line edits | `src/lib/jbi/edit.ts`, `cnd.ts` |
-| Frame move / transform | `src/lib/jbi/frameTransform.ts`, `src/features/transform/index.tsx`, `kinematics/transform.py` |
+| Frame move / transform | `src/lib/jbi/frameTransform.ts`, `src/features/transform/index.tsx`, `kinematics/transform.py`, `kinematics/frame_flip.py` |
 | Calibration / write gate | `src/features/calibration/storage.ts`, `wizard.tsx`, `lib/calibration/*`, `kinematics/calibrate.py` |
 | Profiles / folders | `src/lib/robot/profile.ts`, `folders.ts` |
 | Kin protocol | `src/lib/kin/client.ts` ↔ `kinematics/server.py` |
@@ -43,7 +43,7 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 | **Backup corpus** | `../Yaskawa Jobs/DYNAMIC1` (~300 `.JBI` + CND/PRM) — local only, gitignored |
 | **Manuals** | `../Manuals/` — local only, gitignored |
 | **Flip assist source** | `../Assets/Flip assist.png` → bundled as `src/assets/flip-assist.png` (dual-station). Single-side: `Flip assist left.png` / `Flip assist right.png` → `flip-assist-left.png` / `flip-assist-right.png` |
-| **Transform fixtures** | `fixtures/transform/` (+ `kinematics/testdata/transform/`) — synthetic USER cartesian before/after for transfer / YZ / single-side / **offset +100 X** |
+| **Transform fixtures** | `fixtures/transform/` (+ `kinematics/testdata/transform/`) — synthetic USER cartesian before/after for transfer / Flip UF convert / YZ / single-side / **offset +100 X** |
 | **Parent launchers** | `../Start Yaskawa Job Editor.bat`, `../Stop Yaskawa Job Editor.bat` |
 
 ### Run / stop / tests
@@ -119,8 +119,8 @@ flowchart LR
 | `src/features/wizard/` | Job Editing Wizard (intent → diff → write) |
 | `src/features/library/` | Loaded Jobs + dbl-click → Wizard/Manual modal |
 | `src/features/editor/` | Manual Editor |
-| `src/features/calibration/` | Manual fit UI + Guided wizard + gate storage |
-| `src/features/transform/` | Transfer / Mirror / **Single-side mirror** / Offset + flip assist; **Preview → Write to output folder** (`writeOutputFile`, edit-write gate) |
+| `src/features/calibration/` | Manual fit UI + Guided wizard + upload/extract + gate storage |
+| `src/features/transform/` | Transfer / **Frame convert (Flip)** / Mirror / **Single-side mirror** / Offset + flip assist; **Preview → Write to output folder** (`writeOutputFile`, edit-write gate) |
 | `src/features/diff/` | Unified diff, dry-run, write, USB export hook |
 | `src/features/export/UsbExportPanel.tsx` | Removable drive export from output |
 | `src/assets/flip-assist.png` | Dual-station Flip assist diagram |
@@ -137,7 +137,7 @@ flowchart LR
 | `src/lib/jbi/edit.ts` | Insert/delete/reorder; V=/VJ=; weld tokens |
 | `src/lib/jbi/cnd.ts` | ARCSRT/ARCEND/WEAV inventory validate |
 | `src/lib/jbi/diff.ts` | Unified diff + validation report |
-| `src/lib/jbi/frameTransform.ts` | PULSE→USER frame-move; USER cartesian transfer; mirror / single-side (same UF); offset; optional pulse-axis flips |
+| `src/lib/jbi/frameTransform.ts` | PULSE→USER frame-move; USER cartesian transfer; **Flip UF convert**; mirror / single-side (same UF); offset; optional pulse-axis flips |
 | `src/lib/robot/profile.ts` | Multi-profile store, install gate, CAL_* names |
 | `src/lib/robot/pulseMirrorPrefs.ts` | Per-profile advanced S/L/U/R/B/T sign knobs (default identity) |
 | `src/lib/robot/folders.ts` | Per-profile source/output; `YaskawaJobEditor_Output` |
@@ -165,6 +165,8 @@ flowchart LR
 | `kinematics/robot_profile.py` | Backup scan/create/load |
 | `kinematics/calibrate.py` | Pair fit / residuals; home→±limit scale seeding |
 | `kinematics/transform.py` | Frame move / mirror / **offset (USER/BASE XYZ + fixed-frame RPY)** |
+| `kinematics/frame_flip.py` | **User-frame Flip convert** — `P_new = inv(UF_new) @ UF_old @ P_old` + optional tool Z 180°; CLI + sidecar |
+| `kinematics/Flip_original.py` | Archived copy of workspace `Flip.py` (do not edit for features — change `frame_flip.py`) |
 | `kinematics/cnd.py` | UFRAME/TOOL readers |
 | `kinematics/RC_PRM_FINDINGS.txt` | RC.PRM geometry hypothesis (AR2010 holds) |
 | `kinematics/regression_s1_s2.py` | Frame-move regression |
@@ -192,6 +194,7 @@ flowchart LR
 - Production jobs often `///POSTYPE PULSE`.
 - **Transfer / frame move:** FK each pulse pose in **source** UF → emit same relative XYZ/RPY as `///POSTYPE USER` + `///USER <target>`. Instructions untouched. **No IK in v1** (controller resolves joints).
 - **Transfer** = identical fixtures (geometry relative to fixture unchanged; only frame id).
+- **Frame convert (Flip)** = remaps **cartesian** poses between two BUSER frames: `inv(UF_new) @ UF_old @ P_old`, optional tool Z 180° (default ON). Updates `///USER` to target. **Not** Transfer. Integer PULSE rows skipped/rejected — use Transfer FK or teach USER first. UF from profile `UFRAME.CND` (`read_uframe`) with editable override.
 - **Mirror** / **Single-side mirror** = reflection across plane in the **same** `///USER` (same station for single-side). Keep source `RCONF`, flag pendant review. Prefer cartesian USER/BASE; PULSE→FK→USER then mirror. Optional advanced pulse-axis sign knobs are approximate until cell-calibrated.
 - **Offset (shift)** = XYZ mm added in current USER/BASE frame; RPY deg applied as **fixed-frame** rotation (`R' = R_delta @ R`). PULSE jobs: FK→USER in source frame, then offset, emit USER. Verified with `USER_CART_S1_OFF_X100.JBI` (+100 mm X).
 
@@ -221,18 +224,21 @@ Weld path: indices strictly between `ARCON`…`ARCOF` (nested depth) for weld-sp
 
 1. **Home is the anchor** — every joint range starts from the known safe home pose.
 2. **Full *safe* range per joint** (not mechanical max): from home, jog each axis to farthest safe **positive** and **negative** in the cell; record each as one taught position (prefer **MOVL**; MOVJ OK if needed). Labels: `S+`, `S-`, … `T+`, `T-`.
-3. **CAL jobs:** `CAL_<robotId>_STANDARD.JBI` + `CAL_<robotId>_RELATIVE.JBI` — one PAUSE / one position per checklist step (home, UF RORG/RXX/RXY, then 12 joint-limit steps, optional extra).
-4. **Workspace-limited mode** (default ON): still allows **Skip** if one direction is unclear; *goal* is both sides when safe.
-5. **`calibrate.py`:** up-weights joint-limit pairs; seeds `pulse_per_degree` from home→±limit Δpulses/Δdegrees before least_squares.
-6. **TODO when cartesian production jobs arrive:** re-validate **mirror** and **offset/shift** against real USER/BASE jobs (synthetic fixtures are interim). Leave conversion-pair import stubbed until cell data exists.
+3. **CAL jobs:** `CAL_<robotId>_STANDARD.JBI` + `CAL_<robotId>_RELATIVE.JBI` — one PAUSE / one position per checklist step (home, UF RORG/RXX/RXY, then 12 joint-limit steps, optional extra). Each pause block embeds `' CALSTEP:<stepId>` plus `STEP_*` pause tags so taught jobs can be re-imported.
+4. **Upload / extract (preferred after pendant teach):** Guided (and Manual) → **Load STANDARD** / **Load RELATIVE** → **Extract into session**. STANDARD fills pulses; RELATIVE fills XYZ RxRyRz (+ USER/BASE). Summary table shows filled vs missing; manual paste remains for gaps. Never writes into the source backup.
+5. **Workspace-limited mode** (default ON): still allows **Skip** if one direction is unclear; *goal* is both sides when safe.
+6. **`calibrate.py`:** up-weights joint-limit pairs; seeds `pulse_per_degree` from home→±limit Δpulses/Δdegrees before least_squares.
+7. **TODO when cartesian production jobs arrive:** re-validate **mirror** and **offset/shift** against real USER/BASE jobs (synthetic fixtures are interim). Leave conversion-pair import stubbed until cell data exists.
 
 | Piece | Path |
 | --- | --- |
 | Step defs (home, UF, S+/S−…) | `src/lib/calibration/steps.ts` |
 | JBI + README generators | `src/lib/calibration/jobGenerator.ts` |
+| Upload / extract from taught JBIs | `src/lib/calibration/extract.ts`, `features/calibration/UploadCalJobs.tsx` |
 | Wizard UI | `src/features/calibration/wizard.tsx` |
 | Fit / residuals | `kinematics/calibrate.py` |
 | Gate storage | `src/features/calibration/storage.ts` |
+| Mini extract fixtures | `fixtures/calibration/CAL_MINI_*.JBI` + `npm run test:calib-extract` |
 
 ---
 
@@ -292,6 +298,7 @@ Disk mirror: `<output>/profiles/robot_profiles.json` (`ROBOT_PROFILES_FILENAME`)
 | `transform_frame` | Pulse rows source UF → poses in target UF |
 | `transform_mirror` | Cartesian poses × plane XY\|XZ\|YZ |
 | `transform_offset` | Poses + delta (XYZ frame add; RPY fixed-frame) |
+| `transform_frame_flip` | Cartesian poses × UF BUSER convert (+ optional tool Z 180°) |
 | `read_uframe` / `read_tool` | Parse CND paths |
 | `scan_backup` | Required/recommended file presence |
 | `create_profile_from_backup` | Build profile from backup folder |
@@ -315,7 +322,7 @@ YMConnect is **not** this protocol — `ymconnect_convert_position` / `src/lib/k
 | `library` | Loaded Jobs | Dbl-click → choose Wizard or Manual Editor |
 | `editor` | Manual Editor | Full line/speed/weld/CND tooling |
 | `calibration` | Calibration | Manual + Guided; export `CAL_<id>_STANDARD/RELATIVE.JBI` |
-| `transform` | Transform | Modes: **Transfer** \| **Mirror** \| **Single-side mirror** \| **Offset** + flip assist; after Preview → rename optional → **Write to output folder** (gate + `writeOutputFile`) |
+| `transform` | Transform | Modes: **Transfer** \| **Frame convert (Flip)** \| **Mirror** \| **Single-side mirror** \| **Offset** + flip assist; after Preview → rename optional → **Write to output folder** (gate + `writeOutputFile`) |
 | `diff` | Diff | Preview / dry-run / write / USB |
 | `setup` | Setup Guide | Forced until min complete |
 
@@ -331,7 +338,7 @@ Wizard mirror/offset intents navigate to Transform (geometry lives there).
 | Add sidebar page | `AppPage` + `Sidebar` + `App.tsx` render |
 | Forced setup steps | `lib/setup/progress.ts` `SETUP_STEP_ORDER` / `MINIMUM_SETUP_STEPS` + `features/setup` |
 | Add transform mode | `features/transform` mode union + UI; kin method if new math; maybe wizard intent |
-| Calibration steps / CAL jobs | `lib/calibration/steps.ts`, `jobGenerator.ts`, `features/calibration/wizard.tsx` |
+| Calibration steps / CAL jobs | `lib/calibration/steps.ts`, `jobGenerator.ts`, `extract.ts`, `features/calibration/wizard.tsx`, `UploadCalJobs.tsx` |
 | Gate threshold / logic | `features/calibration/storage.ts` |
 | Fix serializer / roundtrip | `parse.ts` / `serialize.ts` — then `test:roundtrip` |
 | Speed / weld rules | `lib/jbi/edit.ts` (+ `test:edit`) |
@@ -376,7 +383,7 @@ Wizard mirror/offset intents navigate to Transform (geometry lives there).
 | Pulse-axis mirror knobs | Advanced/approximate; defaults identity until cell-calibrated — not ground truth |
 | Live Guided ±limit sessions | UI/generators ready; needs cell operator capture |
 
-**Suggested next work:** run Guided calibration with home→±limits on cell; link YMConnect SDK + golden ConvertPosition set; re-validate mirror/offset on real USER jobs; optional ROS 2 `joint_states` snapshot helper; enable conversion-pair import when data exists.
+**Suggested next work:** run Guided calibration with home→±limits on cell; upload taught CAL STANDARD/RELATIVE and confirm extract; link YMConnect SDK + golden ConvertPosition set; re-validate mirror/offset on real USER jobs; optional ROS 2 `joint_states` snapshot helper; enable conversion-pair import when data exists.
 
 ---
 
@@ -422,8 +429,8 @@ After changes, run the smallest sufficient set:
 
 ## Status snapshot (2026-08-22)
 
-**Done:** Tauri scaffold; lossless JBI; library; Manual Editor + edit tests; Wizard; Diff/USB; multi-profile + ProfileGate + forced Setup; calibration UI + gate with **home-anchored ± safe joint limits** (CAL STANDARD/RELATIVE); Transform transfer/mirror/**single-side mirror**/offset (+100 X fixture) + flip assist + **save previewed `.JBI` to output folder**; `fixtures/transform/`; kin sidecar FK/calib/transform/profile; YMConnect stub; MotoROS2 setup prefs; `start.bat`/`stop.bat`; GitHub repo `icors2/Yaskawa-Job-Helper`.
+**Done:** Tauri scaffold; lossless JBI; library; Manual Editor + edit tests; Wizard; Diff/USB; multi-profile + ProfileGate + forced Setup; calibration UI + gate with **home-anchored ± safe joint limits** (CAL STANDARD/RELATIVE); Transform transfer/**Frame convert (Flip)**/mirror/**single-side mirror**/offset (+100 X fixture) + flip assist + **save previewed `.JBI` to output folder**; `fixtures/transform/`; kin sidecar FK/calib/transform/frame_flip/profile; YMConnect stub; MotoROS2 setup prefs; `start.bat`/`stop.bat`; GitHub repo `icors2/Yaskawa-Job-Helper`.
 
-**Not done:** live YMConnect cell; MotoROS2 ingest; bulk conversion import; full CALL auto-rewire; non-6-axis DH; calibrated pulse-axis mirror signs; **re-validate mirror/shift on real cartesian production jobs** (TODO).
+**Not done:** live YMConnect cell; MotoROS2 ingest; bulk conversion import; full CALL auto-rewire; non-6-axis DH; calibrated pulse-axis mirror signs; **re-validate mirror/shift/Flip on real cartesian production jobs** (TODO).
 
 *If transform/wizard/speeds/`stop.bat` disagree with this file → verify mid-flight PR and update this handoff.*

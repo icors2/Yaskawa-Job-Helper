@@ -55,6 +55,7 @@ import {
 import { joinPath } from "../../lib/fs/paths"
 import type { StoredCalibration } from "./storage"
 import { writeOutputFile } from "../../lib/fs/desktop"
+import { UploadCalJobsPanel } from "./UploadCalJobs"
 
 const DEFAULT_THRESHOLD_MM = 1.0
 
@@ -94,6 +95,7 @@ export const CalibrationWizard = ({
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<CalibrateResult | null>(null)
   const [exported, setExported] = useState(false)
+  const [importedFromJobs, setImportedFromJobs] = useState(false)
   const [uframeCatalog, setUframeCatalog] = useState<UserFrame[]>([])
   const [newFrameId, setNewFrameId] = useState("4")
   const [newFrameName, setNewFrameName] = useState("")
@@ -411,6 +413,7 @@ export const CalibrationWizard = ({
     setCaptureIndex(0)
     setCapturePhase("pulse")
     setExported(false)
+    setImportedFromJobs(false)
     setStatus("Session cleared.")
   }
 
@@ -489,8 +492,10 @@ export const CalibrationWizard = ({
       return
     }
     if (phase === "export") {
-      if (!exported) {
-        setStatus("Export both jobs (or confirm Output folder) before continuing.")
+      if (!exported && !importedFromJobs) {
+        setStatus(
+          "Export both jobs, or upload taught STANDARD/RELATIVE jobs below, before continuing."
+        )
         return
       }
       setCaptureIndex(0)
@@ -727,6 +732,13 @@ export const CalibrationWizard = ({
               positive and negative (labels S+, S−, … T+/T−) — not mechanical max. Prefer one
               MOVL per step. Skip a direction only if that side is unclear.
             </li>
+            <li>
+              <span className="font-medium text-fg">Upload taught jobs (preferred after pendant).</span>{" "}
+              Copy STANDARD + RELATIVE back to the PC →{" "}
+              <span className="font-medium">Load STANDARD / Load RELATIVE</span> →{" "}
+              <span className="font-medium">Extract into session</span>. Manual paste remains for
+              missing steps.
+            </li>
           </ol>
           <p className="mt-3 text-xs text-muted-2">
             Later: bulk pulse→relative conversion of production jobs will supply regression pairs.
@@ -736,29 +748,48 @@ export const CalibrationWizard = ({
       ) : null}
 
       {phase === "export" ? (
-        <div className="rounded border border-border bg-surface/40 p-4">
-          <h2 className="text-sm font-semibold text-fg">Export paired calibration jobs</h2>
-          <p className="mt-2 text-sm text-fg/80">
-            Writes two JBIs with matching pause tags plus a README that explains the
-            standard→relative procedure.
-          </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 font-mono text-xs text-muted">
-            <li>{jobNames.standardFile} — Phase A PULSE</li>
-            <li>{jobNames.relativeFile} — Phase B cartesian (USER)</li>
-            <li>{CALIBRATION_README_FILENAME}</li>
-          </ul>
-          <button
-            type="button"
-            aria-label="Export standard and relative calibration jobs"
-            disabled={busy}
-            onClick={() => void handleExportJobs()}
-            className="mt-4 btn-primary"
-          >
-            {exported ? "Re-export both jobs" : "Export both jobs + README"}
-          </button>
-          {exported ? (
-            <p className="mt-2 text-xs text-success">Exported — you can continue to Configure frames.</p>
-          ) : null}
+        <div className="flex flex-col gap-4">
+          <div className="rounded border border-border bg-surface/40 p-4">
+            <h2 className="text-sm font-semibold text-fg">Export paired calibration jobs</h2>
+            <p className="mt-2 text-sm text-fg/80">
+              Writes two JBIs with matching <span className="font-mono">CALSTEP</span> tags plus a
+              README that explains the standard→relative procedure.
+            </p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 font-mono text-xs text-muted">
+              <li>{jobNames.standardFile} — Phase A PULSE</li>
+              <li>{jobNames.relativeFile} — Phase B cartesian (USER)</li>
+              <li>{CALIBRATION_README_FILENAME}</li>
+            </ul>
+            <button
+              type="button"
+              aria-label="Export standard and relative calibration jobs"
+              disabled={busy}
+              onClick={() => void handleExportJobs()}
+              className="mt-4 btn-primary"
+            >
+              {exported ? "Re-export both jobs" : "Export both jobs + README"}
+            </button>
+            {exported ? (
+              <p className="mt-2 text-xs text-success">
+                Exported — teach on the robot, then upload below (or continue to capture to type
+                values).
+              </p>
+            ) : null}
+          </div>
+
+          <UploadCalJobsPanel
+            steps={steps}
+            session={session}
+            outputFolder={outputFolder}
+            sourceFolder={sourceFolder}
+            standardFileName={jobNames.standardFile}
+            relativeFileName={jobNames.relativeFile}
+            onSessionChange={(next) => {
+              setSession(saveSessionLocal(next))
+              setImportedFromJobs(true)
+            }}
+            onStatus={setStatus}
+          />
         </div>
       ) : null}
 
@@ -890,6 +921,7 @@ export const CalibrationWizard = ({
       ) : null}
 
       {phase === "capture" && step ? (
+        <div className="flex flex-col gap-4">
         <div className="rounded border border-border bg-surface/40 p-4">
           <h2 className="text-sm font-semibold text-fg">
             {captureIndex + 1}. {step.label}
@@ -939,7 +971,7 @@ export const CalibrationWizard = ({
 
           {capturePhase === "pulse" ? (
             <label className="mt-4 flex flex-col gap-1 text-sm text-fg/80">
-              Pulses (S,L,U,R,B,T) — paste OK
+              Pulses (S,L,U,R,B,T) — paste OK (or upload taught JBIs below)
               <textarea
                 aria-label="Pulse values for current step"
                 className="min-h-20 rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-xs text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft"
@@ -950,7 +982,7 @@ export const CalibrationWizard = ({
           ) : (
             <>
               <label className="mt-4 flex flex-col gap-1 text-sm text-fg/80">
-                Cartesian XYZ Rx Ry Rz — paste OK
+                Cartesian XYZ Rx Ry Rz — paste OK (or upload taught JBIs below)
                 <textarea
                   aria-label="Cartesian values for current step"
                   className="min-h-20 rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-xs text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft"
@@ -1085,6 +1117,31 @@ export const CalibrationWizard = ({
               )
             })}
           </ol>
+        </div>
+
+        <details className="rounded border border-border bg-bg/40 open:bg-surface/30">
+          <summary
+            className="cursor-pointer px-4 py-2 text-sm font-medium text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft"
+            tabIndex={0}
+          >
+            Upload recorded calibration jobs (extract from taught JBIs)
+          </summary>
+          <div className="border-t border-border p-2">
+            <UploadCalJobsPanel
+              steps={steps}
+              session={session}
+              outputFolder={outputFolder}
+              sourceFolder={sourceFolder}
+              standardFileName={jobNames.standardFile}
+              relativeFileName={jobNames.relativeFile}
+              onSessionChange={(next) => {
+                setSession(saveSessionLocal(next))
+                setImportedFromJobs(true)
+              }}
+              onStatus={setStatus}
+            />
+          </div>
+        </details>
         </div>
       ) : null}
 

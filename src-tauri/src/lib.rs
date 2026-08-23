@@ -15,6 +15,7 @@ pub fn run() {
         .manage(SidecarStore::default())
         .invoke_handler(tauri::generate_handler![
             fs_commands::pick_folder,
+            fs_commands::pick_jbi_file,
             fs_commands::set_source_folder,
             fs_commands::set_output_folder,
             fs_commands::get_folders,

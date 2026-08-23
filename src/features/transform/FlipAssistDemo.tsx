@@ -4,7 +4,7 @@ import flipAssistRightImage from "../../assets/flip-assist-right.png"
 import type { MirrorPlane } from "../../lib/kin/client"
 import type { StationSide } from "../../lib/jbi/frameTransform"
 
-export type TransformDemoMode = "mirror" | "transfer" | "offset" | "singleSide"
+export type TransformDemoMode = "mirror" | "transfer" | "offset" | "singleSide" | "frameFlip"
 
 interface FlipAssistDemoProps {
   mode: TransformDemoMode
@@ -56,6 +56,9 @@ const flipAssistCaption = (
   }
   if (mode === "transfer") {
     return `Transfer (identical fixtures): demo part stays in the same seat on both tabletops — only ///USER ${sourceUf} → ${targetUf} changes.`
+  }
+  if (mode === "frameFlip") {
+    return `Frame convert (Flip): remaps cartesian path from UF${sourceUf} BUSER into UF${targetUf} via inv(UF_new)@UF_old@P — not a simple ///USER relabel.`
   }
   if (mode === "offset") {
     return "Offset: small cartesian shift of the demo part/path on the fixture (right station shows the delta)."
@@ -312,7 +315,7 @@ export const FlipAssistDemo = ({
 }: FlipAssistDemoProps) => {
   const caption = flipAssistCaption(mode, mirrorPlane, sourceUf, targetUf, stationSide)
   const showMirror = mode === "mirror"
-  const showTransfer = mode === "transfer"
+  const showTransfer = mode === "transfer" || mode === "frameFlip"
   const showOffset = mode === "offset"
   const showSingleSide = mode === "singleSide"
 

@@ -253,6 +253,11 @@ def main() -> None:
         test_transfer_uf2_to_uf3_identical,
         test_uframe_cnd_s1_s2_present,
     )
+    from tests.test_frame_flip import (
+        test_flip_fixture_jbi_roundtrip,
+        test_flip_sample_matrix_matches_formula,
+        test_server_transform_frame_flip,
+    )
 
     test_transfer_uf2_to_uf3_identical()
     test_mirror_yz_same_user_frame()
@@ -260,6 +265,12 @@ def main() -> None:
     test_offset_x100_same_user_frame()
     test_uframe_cnd_s1_s2_present()
     print("  fixture transfer / YZ / single-side / offset +100 X OK")
+
+    print("Frame Flip convert...")
+    test_flip_sample_matrix_matches_formula()
+    test_flip_fixture_jbi_roundtrip()
+    test_server_transform_frame_flip()
+    print("  Flip matrix + JBI fixture + sidecar OK")
 
     print("Calibration (home + UFRAME orientation constraints)...")
     before, fitted = test_calibrate_improves_or_holds()

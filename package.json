@@ -16,6 +16,7 @@
     "test:transform": "tsx scripts/transform-test.ts",
     "test:roundtrip": "tsx scripts/roundtrip.ts",
     "test:edit": "tsx scripts/edit-test.ts",
+    "test:calib-extract": "tsx scripts/calib-extract-test.ts",
     "test:regression": "python kinematics/regression_s1_s2.py"
   },
   "dependencies": {

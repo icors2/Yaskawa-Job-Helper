@@ -29,6 +29,12 @@ const formatDateLine = (date = new Date()): string => {
   return `///DATE ${yyyy}/${mm}/${dd} ${hh}:${mi}`
 }
 
+/**
+ * Stable machine tag embedded in both STANDARD and RELATIVE jobs.
+ * Extraction matches on this first (`CALSTEP:<step.id>`), then pauseTag.
+ */
+export const calStepComment = (stepId: string): string => `' CALSTEP:${stepId}`
+
 const pauseBlock = (
   step: CalibrationStepDef,
   variant: "standard" | "relative"
@@ -40,9 +46,10 @@ const pauseBlock = (
   const hint = variant === "standard" ? step.pulseHint : step.cartesianHint
   const teach =
     step.kind === "joint_limit"
-      ? `' Teach ONE position here (prefer MOVL; MOVJ OK). Label ${step.axis ?? "?"}${step.direction ?? ""}`
-      : "' Teach ONE position at this PAUSE (prefer MOVL when cartesian-capable)"
+      ? `' Teach ONE MOVL/MOVJ here (keep CALSTEP tag). Label ${step.axis ?? "?"}${step.direction ?? ""}`
+      : "' Teach ONE MOVL/MOVJ at this PAUSE (keep CALSTEP tag above)"
   return [
+    calStepComment(step.id),
     `MSG "${step.pauseTag}"`,
     `' ${step.pauseTag}`,
     `' ${phase}`,
@@ -113,9 +120,11 @@ export const buildStandardCalibrationJob = (
     "' Home is the ANCHOR. Per joint: record S+ and S-",
     "' (… T+/T−) as farthest SAFE limits from home.",
     "' Prefer one MOVL (or MOVJ) taught per PAUSE line.",
+    "' Keep ' CALSTEP:<id> comments — PC extract uses them.",
     "' Procedure: program/teach as STANDARD first,",
     "' record PULSE at each PAUSE, then convert or",
     "' load RELATIVE job for cartesian at same poses.",
+    "' After teach: upload both JBIs → Extract in PC.",
     "' SAFETY: Operator jog/teach only. Cell-limited",
     "' safe range — NOT mechanical max / crash envelope.",
     "' Skip a +/− side only if that direction is unclear.",
@@ -130,7 +139,7 @@ export const buildStandardCalibrationJob = (
     "MSG \"STD CAL DONE — switch to RELATIVE\"",
     `' Next: load ${names.relativeName} (or convert this`,
     "' job to relative/USER) and capture cartesian at",
-    "' the SAME physical poses (matching pause tags).",
+    "' the SAME physical poses (matching CALSTEP tags).",
     "END"
   ]
   return `${lines.join(NL)}${NL}`
@@ -153,6 +162,8 @@ export const buildRelativeCalibrationJob = (
     "' Display BASE or USER n on the pendant and record",
     "' X Y Z Rx Ry Rz (+ which frame).",
     "' Prefer one MOVL per PAUSE when teaching.",
+    "' Keep ' CALSTEP:<id> comments — PC extract uses them.",
+    "' After teach: upload both JBIs → Extract in PC.",
     "' SAFETY: Full *safe* range from home — not crash max.",
     "' Optional MOVJ P100 COMMENTED OUT.",
     "' ============================================",
@@ -162,7 +173,7 @@ export const buildRelativeCalibrationJob = (
     "' --- Optional known-safe home (if path clear) ---",
     "'MOVJ P100 VJ=5.00",
     ...steps.flatMap((step) => pauseBlock(step, "relative")),
-    "MSG \"REL CAL DONE — enter data in PC\"",
+    "MSG \"REL CAL DONE — upload JBIs to PC\"",
     "END"
   ]
   return `${lines.join(NL)}${NL}`
@@ -232,7 +243,16 @@ export const buildCalibrationReadme = (
     "     and return to the same physical poses (matching pause tags).",
     "  4. At each PAUSE: display BASE or USER n → write X,Y,Z,Rx,Ry,Rz → Phase B.",
     "",
-    "Both jobs share identical pause tags so the wizard pairs Phase A + B.",
+    "Both jobs share identical CALSTEP:<stepId> comments and pause tags",
+    "so the PC wizard can upload the taught JBIs and extract positions.",
+    "",
+    "After teaching on the robot",
+    "--------------------------",
+    "1. Copy the taught STANDARD + RELATIVE jobs back to the PC",
+    "   (output folder or USB) — never overwrite the source backup.",
+    "2. Calibration → Guided → Upload recorded calibration jobs.",
+    "3. Load STANDARD (pulses) + RELATIVE (cartesian) → Extract into session.",
+    "4. Review the summary table; type any missing steps manually.",
     "",
     "Joint limits (from home)",
     "-----------------------",
@@ -266,10 +286,12 @@ export const buildCalibrationReadme = (
     "PC wizard steps",
     "---------------",
     "1. Set Output folder in the app header. Confirm active robot profile.",
-    "2. Calibration → Guided mode → Intro → Configure frames → Export → Capture.",
-    "3. Per point: Phase A pulses, then Phase B cartesian (validation before Next).",
-    "4. Save session → Review → Run calibrate → Apply (gate if ≤ threshold).",
-    "5. Escape to Manual Calibration anytime for free-form pairs.",
+    "2. Calibration → Guided mode → Intro → Configure frames → Export.",
+    "3. Teach on the robot (STANDARD pulses, then RELATIVE cartesian).",
+    "4. Upload taught STANDARD + RELATIVE → Extract into session",
+    "   (or type Phase A/B per point). Review summary for gaps.",
+    "5. Save session → Review → Run calibrate → Apply (gate if ≤ threshold).",
+    "6. Escape to Manual Calibration anytime for free-form pairs.",
     "",
     "Later (not available yet)",
     "-------------------------",

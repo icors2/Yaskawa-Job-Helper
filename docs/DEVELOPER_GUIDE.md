@@ -71,7 +71,7 @@ On every app session a **blocking “Choose robot profile”** screen appears be
    - Safety acknowledgements
 4. **Calibration** may be **skipped for now** during setup. Banner: *Setup can continue; editing unlocks after calibration.* **Loaded Jobs** browse stays read-only; **Diff / Job Editing Wizard writes and transforms stay locked** until calibration is applied for the **active** profile. Finish with **Save** / **Finish setup** → **Loaded Jobs**.
 
-**Active job:** selecting a job in Loaded Jobs (or opening it in the Wizard / Manual Editor) sets a shared active job used by **Transform** (Transfer / Mirror / Single-side mirror / Offset), so you do not need to re-type the path.
+**Active job:** selecting a job in Loaded Jobs (or opening it in the Wizard / Manual Editor) sets a shared active job used by **Transform** (Transfer / Frame convert Flip / Mirror / Single-side mirror / Offset), so you do not need to re-type the path.
 
 ### Required controller files (profile create)
 
@@ -133,7 +133,9 @@ Locked protocol version **`1.0.0`** (camelCase) is defined in:
 - `src/lib/kin/client.ts` (`KIN_PROTOCOL_VERSION`)
 - `kinematics/server.py`
 
-Methods: `ping`, `forward_kinematics`, `calibrate`, `transform_frame`, `transform_mirror`, `transform_offset`, `read_uframe`, `read_tool`, `scan_backup`, `create_profile_from_backup`, `load_profile`, `get_profile`.
+Methods: `ping`, `forward_kinematics`, `calibrate`, `transform_frame`, `transform_mirror`, `transform_offset`, `transform_frame_flip`, `read_uframe`, `read_tool`, `scan_backup`, `create_profile_from_backup`, `load_profile`, `get_profile`.
+
+**Frame convert (Flip):** `kinematics/frame_flip.py` — `P_new = inv(UF_new) @ UF_old @ P_old` (+ optional tool Z 180°). UF poses are BUSER from `UFRAME.CND` via `read_uframe` / profile. Sidecar method `transform_frame_flip`. UI: Transform → **Frame convert (Flip)**. CLI: `python kinematics/frame_flip.py …`. Reference copy: `kinematics/Flip_original.py`.
 
 YMConnect ConvertPosition is a **separate** Tauri/bridge path (`ymconnect_convert_position`), not the Python sidecar.
 
@@ -142,9 +144,10 @@ YMConnect ConvertPosition is a **separate** Tauri/bridge path (`ymconnect_conver
 | Command | What it checks |
 | --- | --- |
 | `npm run test:roundtrip` | Byte-identical parse→serialize over `fixtures/` + `../Yaskawa Jobs/DYNAMIC1` (~305 `.JBI`) — **gate on parser/serialize changes** |
+| `npm run test:calib-extract` | Taught CAL STANDARD/RELATIVE mini fixtures → extract pulses/cartesians |
 | `npm run test:edit` | Instruction insert/delete/reorder, speed scale/set, weld CND validation helpers |
 | `npm run test:kin` | Python FK / calibration / **robot profile** / transform fixture unit tests |
-| `npm run test:transform` | USER cartesian transfer + YZ / single-side fixture asserts (`fixtures/transform/`) |
+| `npm run test:transform` | USER cartesian transfer + Flip convert + YZ / single-side / offset fixture asserts (`fixtures/transform/`) |
 | `npm run test:regression` | S1→S2 frame-move vs hand-taught job pairs |
 
 Also useful: `npx tsc --noEmit` for TypeScript.
@@ -157,16 +160,16 @@ yaskawa-job-editor/
   src/
     features/          setup, wizard, library, editor, calibration (+ guided), transform, diff
     lib/jbi/           parse, serialize, library, edit, cnd, diff, frameTransform
-    lib/calibration/   STANDARD+RELATIVE JBI generators, dynamic steps, session helpers
+    lib/calibration/   STANDARD+RELATIVE JBI generators, extract from taught jobs, session helpers
     lib/robot/         multi-profile store + install gate
     lib/setup/         Setup Guide progress (localStorage)
     lib/kin/client.ts  sidecar protocol (locked)
     lib/fs/desktop.ts  Tauri FS + folder pickers + USB export
   src-tauri/           Rust shell (source read-only, output writes, USB, YMConnect bridge)
   ymconnect/           C# ConvertPosition bridge stub (soft dependency)
-  kinematics/          Python FK, robot_profile, calibrate, transform, CND readers, stdio server
-  fixtures/            small .JBI + UFRAME/TOOL samples for local tests
-  scripts/             roundtrip.ts, edit-test.ts
+  kinematics/          Python FK, robot_profile, calibrate, transform, frame_flip, CND readers, stdio server
+  fixtures/            small .JBI + UFRAME/TOOL samples + transform/ Flip fixtures + calibration/ mini CAL extract jobs
+  scripts/             roundtrip.ts, edit-test.ts, calib-extract-test.ts
   docs/                this guide + Motoman findings + MOTOROS2.md
 ../Start Yaskawa Job Editor.bat / Stop Yaskawa Job Editor.bat
 ../Yaskawa Jobs/DYNAMIC1/   controller backup (~300 jobs + *.CND / RC.PRM)
@@ -241,12 +244,15 @@ No inverse kinematics in v1 — the controller resolves joints at playback. **Tr
 
 ### Calibration test (robot-assisted)
 
-Default: offline pendant transcription. Optional: **Capture via YMConnect** when the bridge + SDK are available (still untested on cell). Motion is operator-responsibility; exported jobs are PAUSE-heavy.
+Default: offline pendant teach + **upload/extract**. Optional: **Capture via YMConnect** when the bridge + SDK are available (still untested on cell). Motion is operator-responsibility; exported jobs are PAUSE-heavy with `' CALSTEP:<stepId>` tags.
 
 1. Set **Output folder** and confirm **active robot**.
 2. Open **Calibration** → **Guided** — export `CAL_<robotId>_STANDARD.JBI` + `CAL_<robotId>_RELATIVE.JBI`.
-3. Home is the anchor. Phase A PULSE → Phase B BASE/USER at the same poses, including per-axis **S+/S− … T+/T−** farthest *safe* limits from home (skip a side only if unclear). Prefer one MOVL per step.
-4. Fit → Apply (stored per profile). When real cartesian production jobs arrive later, re-validate mirror/shift.
+3. Teach on the pendant (home anchor; Phase A PULSE then Phase B BASE/USER at the same poses, including **S+/S− … T+/T−** safe limits). Prefer one MOVL per `CALSTEP`.
+4. Copy taught jobs back to the PC → **Load STANDARD** / **Load RELATIVE** → **Extract into session** (summary table). Type any missing steps manually.
+5. Fit → Apply (stored per profile). When real cartesian production jobs arrive later, re-validate mirror/shift.
+
+Regression: `npm run test:calib-extract` (mini fixtures under `fixtures/calibration/`).
 
 ### YMConnect bridge (soft dependency)
 

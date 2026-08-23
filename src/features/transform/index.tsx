@@ -2,12 +2,18 @@ import { useEffect, useMemo, useState, type SyntheticEvent } from "react"
 import { getCalibrationGate, getEditWriteGate } from "../calibration"
 import {
   previewFrameMove,
+  previewFrameFlipJob,
   previewMirrorJob,
   previewOffsetJob,
   type StationSide
 } from "../../lib/jbi/frameTransform"
 import { readTextFile, writeOutputFile, type JbiEntry } from "../../lib/fs/desktop"
-import type { MirrorPlane } from "../../lib/kin/client"
+import {
+  readUframe,
+  type CartesianPose,
+  type MirrorPlane,
+  type UserFrame
+} from "../../lib/kin/client"
 import { getActiveProfile, getRobotInstallGate } from "../../lib/robot/profile"
 import {
   DEFAULT_PULSE_MIRROR_SIGNS,
@@ -27,10 +33,36 @@ import { FlipAssistDemo } from "./FlipAssistDemo"
  * Single-side mirror keeps the same ///USER and reflects in that frame.
  * Prefer cartesian USER/BASE (or PULSE→FK→USER). Pulse-axis flips are advanced/approximate.
  *
+ * Frame convert (Flip) remaps cartesian poses between two BUSER frames via
+ * P_new = inv(UF_new) @ UF_old @ P_old (+ optional tool Z 180°).
+ *
  * After Preview, Write to output folder uses writeOutputFile (output tree only; never source).
  */
 
-type TransformMode = "mirror" | "transfer" | "offset" | "singleSide"
+type TransformMode = "mirror" | "transfer" | "offset" | "singleSide" | "frameFlip"
+
+const ZERO_POSE: CartesianPose = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 }
+
+const formatUfPoseText = (pose: CartesianPose): string =>
+  `${pose.x},${pose.y},${pose.z},${pose.rx},${pose.ry},${pose.rz}`
+
+const parseUfPoseText = (text: string): CartesianPose | null => {
+  const parts = text.split(",").map((p) => Number.parseFloat(p.trim()))
+  if (parts.length < 6 || parts.some((n) => !Number.isFinite(n))) {
+    return null
+  }
+  return {
+    x: parts[0],
+    y: parts[1],
+    z: parts[2],
+    rx: parts[3],
+    ry: parts[4],
+    rz: parts[5]
+  }
+}
+
+const poseFromBuser = (buser: CartesianPose | undefined): CartesianPose =>
+  buser ? { ...buser } : { ...ZERO_POSE }
 
 interface TransformPageProps {
   jobs?: JbiEntry[]
@@ -70,6 +102,9 @@ const deriveOutName = (args: {
   if (args.mode === "transfer") {
     return `${stem}_UF${args.targetFrameId}.JBI`
   }
+  if (args.mode === "frameFlip") {
+    return `${stem}_FLIP_UF${args.targetFrameId}.JBI`
+  }
   if (args.mode === "mirror") {
     return `${stem}_M${args.mirrorPlane}.JBI`
   }
@@ -98,6 +133,11 @@ export const TransformPage = ({
   const [singleSidePlane, setSingleSidePlane] = useState<MirrorPlane>("YZ")
   const [stationSide, setStationSide] = useState<StationSide>("left")
   const [offsetText, setOffsetText] = useState("0,0,0,0,0,0")
+  const [applyToolZFlip, setApplyToolZFlip] = useState(true)
+  const [sourceUfText, setSourceUfText] = useState(formatUfPoseText(ZERO_POSE))
+  const [targetUfText, setTargetUfText] = useState(formatUfPoseText(ZERO_POSE))
+  const [loadedFrames, setLoadedFrames] = useState<UserFrame[]>([])
+  const [ufLoadNote, setUfLoadNote] = useState<string | null>(null)
   const [preview, setPreview] = useState("")
   const [diffText, setDiffText] = useState("")
   const [outName, setOutName] = useState("")
@@ -148,6 +188,56 @@ export const TransformPage = ({
   useEffect(() => {
     setPulsePrefs(loadPulseMirrorPrefs(activeProfile?.id ?? null))
   }, [activeProfile?.id])
+
+  useEffect(() => {
+    const uframePath = activeProfile?.sourceFiles?.["UFRAME.CND"]?.path
+    if (!uframePath) {
+      setLoadedFrames([])
+      setUfLoadNote(
+        "No UFRAME.CND on the active profile — enter BUSER X,Y,Z,Rx,Ry,Rz manually or finish Setup."
+      )
+      return
+    }
+    let cancelled = false
+    const load = async () => {
+      try {
+        const result = await readUframe(uframePath)
+        if (cancelled) {
+          return
+        }
+        setLoadedFrames(result.frames)
+        setUfLoadNote(`Loaded ${result.frames.length} user frame(s) from profile UFRAME.CND.`)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+        setLoadedFrames([])
+        setUfLoadNote(
+          error instanceof Error
+            ? `Could not read UFRAME.CND: ${error.message}`
+            : String(error)
+        )
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [activeProfile?.id, activeProfile?.sourceFiles])
+
+  useEffect(() => {
+    if (mode !== "frameFlip") {
+      return
+    }
+    const source = loadedFrames.find((f) => f.id === sourceFrameId)
+    const target = loadedFrames.find((f) => f.id === targetFrameId)
+    if (source?.buser) {
+      setSourceUfText(formatUfPoseText(poseFromBuser(source.buser)))
+    }
+    if (target?.buser) {
+      setTargetUfText(formatUfPoseText(poseFromBuser(target.buser)))
+    }
+  }, [mode, sourceFrameId, targetFrameId, loadedFrames])
 
   const filteredJobs = useMemo(() => {
     const q = jobFilter.trim().toLowerCase()
@@ -229,6 +319,12 @@ export const TransformPage = ({
     if (next === "singleSide") {
       setStatus(
         "Single-side mirror — same station / same ///USER. Prefer cartesian USER poses; PULSE uses FK→USER then mirror."
+      )
+      return
+    }
+    if (next === "frameFlip") {
+      setStatus(
+        "Frame convert (Flip) — remap cartesian poses from current UF BUSER → target UF BUSER (homogeneous). Tool Z 180° on by default."
       )
       return
     }
@@ -353,6 +449,41 @@ export const TransformPage = ({
     }
   }
 
+  const handleFrameFlipPreview = async () => {
+    if (!ensureGate() || !ensureJobPath()) {
+      return
+    }
+    const sourceUf = parseUfPoseText(sourceUfText)
+    const targetUf = parseUfPoseText(targetUfText)
+    if (!sourceUf || !targetUf) {
+      setStatus("Current and target UF BUSER need six numbers: X,Y,Z,Rx,Ry,Rz")
+      return
+    }
+    try {
+      const original = await readTextFile(jobPath)
+      const result = await previewFrameFlipJob({
+        originalText: original,
+        sourceFrameId,
+        targetFrameId,
+        sourceUf,
+        targetUf,
+        applyToolZFlip,
+        sourceLabel: jobPath
+      })
+      const nextOut = suggestedOutName()
+      applyPreviewResult(result.after, result.diffText, nextOut)
+      setRconfReview(false)
+      const warnNote =
+        result.warnings.length > 0 ? ` Warnings: ${result.warnings.join(" ")}` : ""
+      setStatus(
+        `Frame convert preview: UF${sourceFrameId} → UF${targetFrameId} (${result.poseCount} pose(s)` +
+          `${applyToolZFlip ? ", tool Z 180°" : ", no tool flip"}). Review the diff, then Write as ${nextOut}.${warnNote}`
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const handleSave = async () => {
     if (!preview.trim()) {
       setStatus("Run Preview first — Save stays disabled until a transform preview exists.")
@@ -397,11 +528,12 @@ export const TransformPage = ({
         <h1 className="text-lg font-semibold text-fg">Transform</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted">
           Station operations: <span className="text-fg/90">Transfer</span> (identical fixtures),{" "}
-          <span className="text-fg/90">Mirror</span> (mirrored fixtures across stations),{" "}
-          <span className="text-fg/90">Single-side mirror</span> (same ///USER / same station), and{" "}
-          <span className="text-fg/90">Offset</span>. Prefer cartesian USER/BASE jobs for mirrors.
-          Preview, then <span className="text-fg/90">Write to output folder</span> (never the source
-          backup). Uses the <span className="text-fg/80">active robot profile</span>.
+          <span className="text-fg/90">Frame convert (Flip)</span> (remap cartesian between UF
+          BUSER poses), <span className="text-fg/90">Mirror</span> (mirrored fixtures),{" "}
+          <span className="text-fg/90">Single-side mirror</span> (same ///USER), and{" "}
+          <span className="text-fg/90">Offset</span>. Prefer cartesian USER/BASE jobs for Flip and
+          mirrors. Preview, then <span className="text-fg/90">Write to output folder</span> (never
+          the source backup). Uses the <span className="text-fg/80">active robot profile</span>.
         </p>
         {!installGate.allowed ? (
           <p className="mt-2 rounded border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-accent-fg" role="status">
@@ -511,6 +643,7 @@ export const TransformPage = ({
         {(
           [
             { id: "transfer" as const, label: "Transfer to new userframe" },
+            { id: "frameFlip" as const, label: "Frame convert (Flip)" },
             { id: "mirror" as const, label: "Mirror" },
             { id: "singleSide" as const, label: "Single-side mirror" },
             { id: "offset" as const, label: "Offset" }
@@ -583,6 +716,123 @@ export const TransformPage = ({
             >
               Preview transfer
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {mode === "frameFlip" ? (
+        <div className="rounded border border-border bg-bg/50 p-4">
+          <h2 className="text-sm font-semibold text-fg">Frame convert (Flip)</h2>
+          <p className="mt-1 text-sm text-muted">
+            Remap a <span className="text-fg/90">cartesian USER/BASE</span> job from the current
+            user frame into another using BUSER poses from{" "}
+            <span className="font-mono text-fg/80">UFRAME.CND</span>:{" "}
+            <span className="font-mono text-xs text-fg/80">
+              P_new = inv(UF_new) @ UF_old @ P_old
+            </span>
+            . Distinct from Transfer (relabel only). Integer PULSE rows are not converted.
+          </p>
+          {ufLoadNote ? (
+            <p className="mt-2 text-xs text-muted" role="status">
+              {ufLoadNote}
+            </p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-3">
+            <label className="flex flex-col gap-1 text-sm text-fg/80">
+              Current UF#
+              <input
+                type="number"
+                aria-label="Current user frame for Flip convert"
+                className="w-24 rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-sm"
+                value={sourceFrameId}
+                onChange={(event) => setSourceFrameId(Number.parseInt(event.target.value, 10) || 2)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-fg/80">
+              Target UF#
+              <input
+                type="number"
+                aria-label="Target user frame for Flip convert"
+                className="w-24 rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-sm"
+                value={targetFrameId}
+                onChange={(event) => setTargetFrameId(Number.parseInt(event.target.value, 10) || 3)}
+              />
+            </label>
+            {loadedFrames.length > 0 ? (
+              <>
+                <label className="flex flex-col gap-1 text-sm text-fg/80">
+                  Current from CND
+                  <select
+                    aria-label="Pick current UF from UFRAME.CND"
+                    className="min-w-[10rem] rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-xs"
+                    value={sourceFrameId}
+                    onChange={(event) =>
+                      setSourceFrameId(Number.parseInt(event.target.value, 10) || 2)
+                    }
+                  >
+                    {loadedFrames.map((frame) => (
+                      <option key={`src-${frame.id}`} value={frame.id}>
+                        UF{frame.id} {frame.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-fg/80">
+                  Target from CND
+                  <select
+                    aria-label="Pick target UF from UFRAME.CND"
+                    className="min-w-[10rem] rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-xs"
+                    value={targetFrameId}
+                    onChange={(event) =>
+                      setTargetFrameId(Number.parseInt(event.target.value, 10) || 3)
+                    }
+                  >
+                    {loadedFrames.map((frame) => (
+                      <option key={`dst-${frame.id}`} value={frame.id}>
+                        UF{frame.id} {frame.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : null}
+            <label className="flex items-center gap-2 self-end text-sm text-fg/80">
+              <input
+                type="checkbox"
+                aria-label="Apply tool Z 180 degree flip"
+                checked={applyToolZFlip}
+                onChange={(event) => setApplyToolZFlip(event.target.checked)}
+              />
+              Apply tool Z 180° flip (default ON)
+            </label>
+            <button
+              type="button"
+              aria-label="Preview frame convert Flip"
+              onClick={() => void handleFrameFlipPreview()}
+              className="btn-primary self-end"
+            >
+              Preview frame convert
+            </button>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <label className="flex flex-col gap-1 text-sm text-fg/80">
+              Current UF BUSER (X,Y,Z,Rx,Ry,Rz) — editable
+              <input
+                aria-label="Current user frame BUSER pose"
+                className="input-field font-mono text-xs"
+                value={sourceUfText}
+                onChange={(event) => setSourceUfText(event.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-fg/80">
+              Target UF BUSER (X,Y,Z,Rx,Ry,Rz) — editable
+              <input
+                aria-label="Target user frame BUSER pose"
+                className="input-field font-mono text-xs"
+                value={targetUfText}
+                onChange={(event) => setTargetUfText(event.target.value)}
+              />
+            </label>
           </div>
         </div>
       ) : null}

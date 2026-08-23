@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   YMCONNECT_ONLINE_VALIDATION,
   calibrate,
@@ -7,6 +7,7 @@ import {
   type CartesianPose
 } from "../../lib/kin/client"
 import { CalibrationWizard } from "./wizard"
+import { UploadCalJobsPanel } from "./UploadCalJobs"
 import {
   clearStored,
   DEFAULT_THRESHOLD_MM,
@@ -20,6 +21,14 @@ import {
   getRobotInstallGate,
   loadProfilesStore
 } from "../../lib/robot/profile"
+import { resolveCalibrationJobNames } from "../../lib/calibration/jobGenerator"
+import { buildCalibrationSteps, defaultConfiguredFrames } from "../../lib/calibration/steps"
+import {
+  completeSamplesForFit,
+  createEmptySession,
+  sampleToCalibratePair
+} from "../../lib/calibration/session"
+import type { CalibrationSession } from "../../lib/calibration/types"
 
 export type { StoredCalibration }
 export { getCalibrationGate, getEditWriteGate } from "./storage"
@@ -60,10 +69,34 @@ export const CalibrationPage = ({
   const [stored, setStored] = useState<StoredCalibration | null>(null)
   const [status, setStatus] = useState("Choose Guided (robot + JBI) or Manual entry.")
   const [busy, setBusy] = useState(false)
+  const [manualSession, setManualSession] = useState<CalibrationSession>(() =>
+    createEmptySession("manual")
+  )
+
+  const manualSteps = useMemo(
+    () => buildCalibrationSteps(defaultConfiguredFrames(), true),
+    []
+  )
+  const jobNames = useMemo(() => resolveCalibrationJobNames(), [])
 
   useEffect(() => {
     setStored(loadStored())
   }, [])
+
+  const handleManualExtractSession = (next: CalibrationSession) => {
+    setManualSession(next)
+    try {
+      const pairs = completeSamplesForFit(next).map(sampleToCalibratePair)
+      setExtraPairs(pairs)
+      setStatus(
+        pairs.length > 0
+          ? `Extracted ${pairs.length} complete pair(s) from CAL jobs into the manual list.`
+          : "Extract ran — complete pairs need both pulse and cartesian; fill remaining manually."
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error))
+    }
+  }
 
   const handleApplyRecord = (record: StoredCalibration, fitted: CalibrateResult) => {
     const install = getRobotInstallGate()
@@ -214,8 +247,8 @@ export const CalibrationPage = ({
           >
             <span className="block text-sm font-medium text-fg">Guided (robot + JBI)</span>
             <span className="mt-1 block text-xs text-muted">
-              Step-by-step: export STANDARD + RELATIVE jobs, capture Phase A pulses then Phase B
-              cartesian at the same poses, capture home→± safe joint limits, then fit and apply.
+              Step-by-step: export STANDARD + RELATIVE jobs, teach on the pendant, upload & extract
+              (or paste), capture home→± safe joint limits, then fit and apply.
             </span>
           </button>
           <button
@@ -266,6 +299,17 @@ export const CalibrationPage = ({
             </button>{" "}
             for the robot-assisted checklist (includes Capture via YMConnect when available).
           </aside>
+
+          <UploadCalJobsPanel
+            steps={manualSteps}
+            session={manualSession}
+            outputFolder={outputFolder}
+            sourceFolder={sourceFolder}
+            standardFileName={jobNames.standardFile}
+            relativeFileName={jobNames.relativeFile}
+            onSessionChange={handleManualExtractSession}
+            onStatus={setStatus}
+          />
 
           <div className="grid gap-3 md:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm text-fg/80">

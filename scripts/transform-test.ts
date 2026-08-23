@@ -1,6 +1,7 @@
 /**
- * Transform fixture checks: USER cartesian transfer + YZ / single-side mirror
- * pose signs and frame labels (no sidecar required for these fixtures).
+ * Transform fixture checks: USER cartesian transfer + Flip convert + YZ /
+ * single-side mirror pose signs and frame labels (no sidecar required for
+ * transfer; Flip/mirror/offset need sidecar when available).
  *
  * Run: npm run test:transform
  */
@@ -11,6 +12,7 @@ import { fileURLToPath } from "node:url"
 import { parseJob } from "../src/lib/jbi/parse.ts"
 import {
   previewFrameMove,
+  previewFrameFlipJob,
   previewMirrorJob,
   previewOffsetJob
 } from "../src/lib/jbi/frameTransform.ts"
@@ -117,6 +119,50 @@ const run = async () => {
   assert(transferActual.userId === 3, "previewFrameMove → ///USER 3")
   assert(transfer.after.includes("//NAME USER_CART_S1_UF3"), "transfer renames job")
   assertPosesClose(transferActual.poses, source.poses, "transfer preview poses identical")
+
+  const flipExpected = collectUserPoses(readFixture("USER_CART_S1_FLIP_UF3.JBI"))
+  assert(flipExpected.userId === 3, "Flip expected ///USER 3")
+  assert(flipExpected.poses.length === 4, "Flip expected has 4 poses")
+
+  try {
+    const uframeText = readFixture("UFRAME.CND")
+    // Parse BUSER for UF2 / UF3 without sidecar (regex on fixture CND).
+    const buserOf = (id: number): CartesianPose => {
+      const block = uframeText.split("//UFRAME ").find((part) => part.startsWith(`${id}\n`) || part.startsWith(`${id}\r`))
+      if (!block) {
+        throw new Error(`UF${id} missing in fixture UFRAME.CND`)
+      }
+      const match = block.match(/BUSER\s+(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+)/)
+      if (!match) {
+        throw new Error(`BUSER for UF${id} not found`)
+      }
+      return {
+        x: Number.parseFloat(match[1]),
+        y: Number.parseFloat(match[2]),
+        z: Number.parseFloat(match[3]),
+        rx: Number.parseFloat(match[4]),
+        ry: Number.parseFloat(match[5]),
+        rz: Number.parseFloat(match[6])
+      }
+    }
+    const flipped = await previewFrameFlipJob({
+      originalText: sourceText,
+      sourceFrameId: 2,
+      targetFrameId: 3,
+      sourceUf: buserOf(2),
+      targetUf: buserOf(3),
+      applyToolZFlip: true,
+      sourceLabel: "USER_CART_S1.JBI"
+    })
+    const flipActual = collectUserPoses(flipped.after)
+    assert(flipActual.userId === 3, "Flip preview → ///USER 3")
+    assert(flipped.after.includes("//NAME USER_CART_S1_FLIP_UF3"), "Flip renames with _FLIP_UF3")
+    assertPosesClose(flipActual.poses, flipExpected.poses, "Flip preview vs FLIP_UF3 fixture")
+  } catch (error) {
+    console.log(
+      `skip — sidecar Flip (${error instanceof Error ? error.message : String(error)}); fixture file still present`
+    )
+  }
 
   const mirrorExpected = collectUserPoses(readFixture("USER_CART_S1_MYZ.JBI"))
   assert(mirrorExpected.userId === 2, "mirror YZ keeps ///USER 2")

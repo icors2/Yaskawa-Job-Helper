@@ -5,6 +5,7 @@ import {
   transformFrame,
   transformMirror,
   transformOffset,
+  transformFrameFlip,
   type CartesianPose,
   type MirrorPlane
 } from "../kin/client"
@@ -597,6 +598,134 @@ export const previewOffsetJob = async (args: {
     "_OFF",
     args.sourceLabel
   )
+}
+
+export interface FrameFlipPreview extends FrameMovePreview {
+  applyToolZFlip: boolean
+  warnings: string[]
+  skippedPulse: number
+}
+
+/**
+ * Convert cartesian poses from current UF BUSER → target UF BUSER (Flip math).
+ * Updates ///USER to target. Does not treat integer PULSE rows as cartesian —
+ * those jobs should use Transfer (FK) instead.
+ */
+export const previewFrameFlipJob = async (args: {
+  originalText: string
+  sourceFrameId: number
+  targetFrameId: number
+  sourceUf: CartesianPose
+  targetUf: CartesianPose
+  applyToolZFlip?: boolean
+  sourceLabel?: string
+}): Promise<FrameFlipPreview> => {
+  const applyToolZFlip = args.applyToolZFlip !== false
+  const refs = collectCartesianVars(args.originalText)
+  const pulseRows = collectPulseRows(args.originalText)
+  const warnings: string[] = []
+
+  if (refs.length === 0) {
+    if (pulseRows.length > 0) {
+      throw new Error(
+        "Frame convert (Flip) needs USER/BASE cartesian poses (decimal X,Y,Z,Rx,Ry,Rz). " +
+          "This job looks like PULSE — use Transfer (FK→USER) or teach/convert to USER first."
+      )
+    }
+    throw new Error(
+      "No USER/BASE cartesian C/P poses found to convert between user frames."
+    )
+  }
+
+  if (pulseRows.length > 0) {
+    warnings.push(
+      `Skipped ${pulseRows.length} PULSE row(s) — Flip converts cartesian only.`
+    )
+  }
+
+  const converted = await transformFrameFlip({
+    poses: refs.map((r) => r.pose),
+    sourceUf: args.sourceUf,
+    targetUf: args.targetUf,
+    sourceFrameId: args.sourceFrameId,
+    targetFrameId: args.targetFrameId,
+    applyToolZFlip
+  })
+
+  const job = parseJob(args.originalText)
+  refs.forEach((ref, i) => {
+    const pose = converted.poses[i]
+    if (!pose) {
+      return
+    }
+    const formatted = formatPose(pose)
+    const label = `${ref.kind}${String(ref.index).padStart(5, "0")}`
+    job.posGroups[ref.groupIndex].vars[ref.varIndex] = {
+      ...job.posGroups[ref.groupIndex].vars[ref.varIndex],
+      values: formatted.split(","),
+      raw: `${label}=${formatted}`
+    }
+  })
+
+  let touchedUser = false
+  for (const group of job.posGroups) {
+    const postype = String(group.postype).toUpperCase()
+    if (postype !== "USER" && postype !== "BASE") {
+      continue
+    }
+    const currentUser = Number.parseInt(String(group.user ?? ""), 10)
+    if (
+      Number.isFinite(currentUser) &&
+      currentUser !== args.sourceFrameId &&
+      postype === "USER"
+    ) {
+      continue
+    }
+    touchedUser = true
+    group.user = String(args.targetFrameId)
+    group.postype = "USER"
+    for (const header of group.headers) {
+      if (header.key === "USER") {
+        header.value = String(args.targetFrameId)
+        header.raw = `///USER ${args.targetFrameId}`
+      }
+      if (header.key === "POSTYPE") {
+        header.value = "USER"
+        header.raw = "///POSTYPE USER"
+      }
+    }
+  }
+  if (!touchedUser) {
+    warnings.push(
+      `No ///USER ${args.sourceFrameId} header updated — check job frame tags.`
+    )
+  }
+
+  const nextName = `${job.name}_FLIP_UF${args.targetFrameId}`
+  job.name = nextName
+  for (const header of job.headers) {
+    if (header.key === "NAME") {
+      header.value = nextName
+      header.raw = `//NAME ${nextName}`
+    }
+  }
+  const after = serializeJob(job, { recomputeNpos: true })
+  const outName = `${nextName}.JBI`
+  return {
+    before: args.originalText,
+    after,
+    outName,
+    diffText: unifiedDiff(
+      args.originalText,
+      after,
+      args.sourceLabel ?? "source",
+      outName
+    ),
+    poseCount: converted.poses.length,
+    applyToolZFlip,
+    warnings,
+    skippedPulse: pulseRows.length
+  }
 }
 
 export const previewMirrorSample = async (plane: MirrorPlane): Promise<{

@@ -15,6 +15,10 @@ export const pickFolder = (): Promise<string | null> => {
   return invoke<string | null>("pick_folder")
 }
 
+export const pickJbiFile = (): Promise<string | null> => {
+  return invoke<string | null>("pick_jbi_file")
+}
+
 export const setSourceFolder = (path: string): Promise<FolderState> => {
   return invoke<FolderState>("set_source_folder", { path })
 }

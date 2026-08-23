@@ -115,6 +115,23 @@ pub fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub fn pick_jbi_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("Yaskawa jobs", &["jbi", "JBI"])
+        .set_title("Open calibration .JBI")
+        .blocking_pick_file();
+    Ok(picked.and_then(|path| {
+        path.into_path()
+            .ok()
+            .map(|resolved| path_to_string(&resolved))
+    }))
+}
+
+#[tauri::command]
 pub fn set_source_folder(store: tauri::State<FolderStore>, path: String) -> Result<FolderState, String> {
     let resolved = PathBuf::from(&path);
     if !resolved.is_dir() {
