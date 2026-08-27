@@ -4,7 +4,13 @@ import flipAssistRightImage from "../../assets/flip-assist-right.png"
 import type { MirrorPlane } from "../../lib/kin/client"
 import type { StationSide } from "../../lib/jbi/frameTransform"
 
-export type TransformDemoMode = "mirror" | "transfer" | "offset" | "singleSide" | "frameFlip"
+export type TransformDemoMode =
+  | "mirror"
+  | "transfer"
+  | "offset"
+  | "singleSide"
+  | "frameFlip"
+  | "stationFlip"
 
 interface FlipAssistDemoProps {
   mode: TransformDemoMode
@@ -59,6 +65,9 @@ const flipAssistCaption = (
   }
   if (mode === "frameFlip") {
     return `Frame convert (Flip): remaps cartesian path from UF${sourceUf} BUSER into UF${targetUf} via inv(UF_new)@UF_old@P — not a simple ///USER relabel.`
+  }
+  if (mode === "stationFlip") {
+    return `Station flip (mirror): S1↔S2 reflection in station UF (x′ = Lx − x, tool Y flip). Fit Lx from a known-good pair, then emit ///USER ${targetUf} with per-point RCONF.`
   }
   if (mode === "offset") {
     return "Offset: small cartesian shift of the demo part/path on the fixture (right station shows the delta)."
@@ -314,7 +323,7 @@ export const FlipAssistDemo = ({
   stationSide = "left"
 }: FlipAssistDemoProps) => {
   const caption = flipAssistCaption(mode, mirrorPlane, sourceUf, targetUf, stationSide)
-  const showMirror = mode === "mirror"
+  const showMirror = mode === "mirror" || mode === "stationFlip"
   const showTransfer = mode === "transfer" || mode === "frameFlip"
   const showOffset = mode === "offset"
   const showSingleSide = mode === "singleSide"

@@ -1,11 +1,13 @@
-# Build a portable USB folder (no installer required).
+# Build Windows files into the shared portable USB folder (no installer required).
 # Output: portable\YaskawaJobEditor\
+# Linux binaries already in that folder are left in place unless -Clean is passed.
 # Then run: .\scripts\Install-Portable-to-Drive.ps1 -Drive D:
 
 param(
   [switch]$SkipFrontend,
   [switch]$SkipKin,
-  [switch]$SkipTauri
+  [switch]$SkipTauri,
+  [switch]$Clean
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,27 +74,11 @@ if (-not $SkipKin) {
 
   $KinExeSmoke = Join-Path $KinDist "yaskawa-kin.exe"
   Write-Host "    Smoke-testing yaskawa-kin.exe..." -ForegroundColor DarkGray
-  $smokeScript = Join-Path $KinDist "smoke_kin.py"
-  @"
-import json, subprocess, sys
-exe = sys.argv[1]
-p = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-out, err = p.communicate(json.dumps({"type": "ping", "id": "smoke"}) + "\n", timeout=90)
-line = (out or "").splitlines()[0] if out else ""
-if not line:
-    sys.stderr.write(err or "no stdout from yaskawa-kin.exe")
-    sys.exit(1)
-data = json.loads(line)
-if data.get("ok") is not True:
-    sys.stderr.write("ping failed: " + line[:500] + "\n" + (err or ""))
-    sys.exit(1)
-print("kin smoke ok")
-"@ | Set-Content -Encoding UTF8 $smokeScript
+  $smokeScript = Join-Path $PSScriptRoot "portable\smoke_kin.py"
   & $py.Source $smokeScript $KinExeSmoke
   if ($LASTEXITCODE -ne 0) {
     throw "yaskawa-kin.exe smoke test failed - local modules or numpy/scipy not bundled"
   }
-  Remove-Item -Force $smokeScript -ErrorAction SilentlyContinue
 } else {
   Write-Host "[2/4] Skipping PyInstaller" -ForegroundColor DarkGray
 }
@@ -109,7 +95,7 @@ if (-not $SkipTauri) {
   Write-Host "[3/4] Skipping Tauri build" -ForegroundColor DarkGray
 }
 
-Write-Host "[4/4] Assembling portable folder..." -ForegroundColor Yellow
+Write-Host "[4/4] Assembling portable folder (Windows files)..." -ForegroundColor Yellow
 
 $ExeCandidates = @(
   (Join-Path $ReleaseDir "yaskawa-job-editor.exe"),
@@ -125,7 +111,8 @@ if (-not (Test-Path $KinExe)) {
   throw "Missing $KinExe - run without -SkipKin or place yaskawa-kin.exe in dist-kin\"
 }
 
-if (Test-Path $OutDir) {
+if ($Clean -and (Test-Path $OutDir)) {
+  Write-Host "    -Clean: removing $OutDir" -ForegroundColor DarkYellow
   Remove-Item -Recurse -Force $OutDir
 }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -141,6 +128,7 @@ Copy-Item -Force (Join-Path $Root "kinematics\requirements.txt") $KinSrcOut -Err
 $RunBat = @(
   "@echo off"
   "cd /d `"%~dp0`""
+  "set `"YASKAWA_PORTABLE_DIR=%~dp0`""
   "title Yaskawa Job Editor (portable)"
   "echo Starting Yaskawa Job Editor from:"
   "echo   %CD%"
@@ -157,43 +145,19 @@ $RunBat = @(
 )
 $RunBat | Set-Content -Encoding ASCII (Join-Path $OutDir "Run.bat")
 
-$Readme = @(
-  "Yaskawa Job Editor - Portable USB build"
-  "======================================="
-  ""
-  "This folder is self-contained. No Node, Python, or Rust needed on the target PC."
-  ""
-  "Contents"
-  "--------"
-  "- Yaskawa Job Editor.exe  - desktop app"
-  "- yaskawa-kin.exe         - kinematics sidecar (spawned automatically)"
-  "- Run.bat                 - double-click to start"
-  "- kinematics\             - optional Python sources (debug only)"
-  ""
-  "Install onto D:\ (or any USB drive)"
-  "-----------------------------------"
-  "From the repo (on a build PC):"
-  ""
-  "  powershell -File scripts\Install-Portable-to-Drive.ps1 -Drive D:"
-  ""
-  "Or copy this entire folder to:"
-  ""
-  "  D:\YaskawaJobEditor\"
-  ""
-  "Then on the locked PC: open D:\YaskawaJobEditor\ and double-click Run.bat"
-  "(or Yaskawa Job Editor.exe)."
-  ""
-  "Notes"
-  "-----"
-  "- Windows 10/11 with WebView2 (usually preinstalled)."
-  "- Profile settings may still store under the Windows user AppData folder."
-  "- Prefer choosing a jobs output folder on the USB stick for edited .JBI files."
-  "- If the PC blocks EXE from removable drives, IT must allow this binary."
-)
-$Readme | Set-Content -Encoding UTF8 (Join-Path $OutDir "README-PORTABLE.txt")
+$PortableSrc = Join-Path $PSScriptRoot "portable"
+Copy-Item -Force (Join-Path $PortableSrc "Yaskawa Job Editor.sh") (Join-Path $OutDir "Yaskawa Job Editor.sh")
+Copy-Item -Force (Join-Path $PortableSrc "README-PORTABLE.txt") (Join-Path $OutDir "README-PORTABLE.txt")
 
 Write-Host ""
 Write-Host "Portable package ready:" -ForegroundColor Green
 Write-Host "  $OutDir"
 Get-ChildItem $OutDir | Format-Table Name, Length -AutoSize
-Write-Host "Next: .\scripts\Install-Portable-to-Drive.ps1 -Drive D:"
+if (Test-Path (Join-Path $OutDir "yaskawa-job-editor")) {
+  Write-Host "Linux files are still present (left untouched)." -ForegroundColor Green
+} else {
+  Write-Host "Ubuntu launcher is included. Build Linux binaries on Ubuntu/WSL with:" -ForegroundColor DarkGray
+  Write-Host "  ./Build-Portable-USB.sh"
+}
+Write-Host "Windows: .\scripts\Install-Portable-to-Drive.ps1 -Drive D:"
+Write-Host "Ubuntu:  bash `"$OutDir\Yaskawa Job Editor.sh`""

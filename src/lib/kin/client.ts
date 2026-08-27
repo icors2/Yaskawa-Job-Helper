@@ -28,6 +28,8 @@ export type KinMethod =
   | "transform_mirror"
   | "transform_offset"
   | "transform_frame_flip"
+  | "fit_station_flip"
+  | "apply_station_flip"
   | "read_uframe"
   | "read_tool"
   | "scan_backup"
@@ -46,6 +48,26 @@ export interface CartesianPose {
   rx: number
   ry: number
   rz: number
+}
+
+export interface StationFlipRecipe {
+  id?: string
+  name?: string
+  mirrorAxis: string
+  offset: number[]
+  mirrorMatrix: number[][]
+  toolCorrection: number[][]
+  positionRmsMm: number
+  orientationRmsDeg: number
+  inliers: number
+  total: number
+  detR: number
+  sourceFrameId?: number | null
+  targetFrameId?: number | null
+  sourceJobName?: string
+  targetJobName?: string
+  jobFamily?: string
+  fittedAt?: string
 }
 
 export interface RobotProfile {
@@ -74,6 +96,7 @@ export interface RobotProfile {
   updatedAt: string
   calibrationId: string | null
   notes: string[]
+  stationFlipRecipes?: StationFlipRecipe[]
 }
 
 export interface BackupFileStatus {
@@ -186,6 +209,36 @@ export interface TransformFrameFlipRequest {
   applyToolZFlip?: boolean
 }
 
+export interface FitStationFlipRequest {
+  id: string
+  type: "fit_station_flip"
+  sourcePulses?: number[][]
+  targetPulses?: number[][]
+  sourcePoses?: CartesianPose[]
+  targetPoses?: CartesianPose[]
+  sourceFrameId?: number
+  targetFrameId?: number
+  sourceUf?: CartesianPose
+  targetUf?: CartesianPose
+  toolId?: number
+  sourceJobName?: string
+  targetJobName?: string
+  jobFamily?: string
+}
+
+export interface ApplyStationFlipRequest {
+  id: string
+  type: "apply_station_flip"
+  recipe: StationFlipRecipe
+  pulses?: number[][]
+  poses?: CartesianPose[]
+  sourceFrameId?: number
+  targetFrameId?: number
+  sourceUf?: CartesianPose
+  targetUf?: CartesianPose
+  toolId?: number
+}
+
 export interface ReadUframeRequest {
   id: string
   type: "read_uframe"
@@ -233,6 +286,8 @@ export type KinRequest =
   | TransformMirrorRequest
   | TransformOffsetRequest
   | TransformFrameFlipRequest
+  | FitStationFlipRequest
+  | ApplyStationFlipRequest
   | ReadUframeRequest
   | ReadToolRequest
   | ScanBackupRequest
@@ -278,6 +333,43 @@ export interface TransformFrameFlipResult {
   applyToolZFlip: boolean
   sourceUf: CartesianPose
   targetUf: CartesianPose
+}
+
+export interface FitStationFlipResult {
+  accepted: boolean
+  message: string
+  recipe: StationFlipRecipe | null
+  positionRmsMm: number
+  orientationRmsDeg: number
+  inliers: number
+  total: number
+  detR: number
+  inlierIndices?: number[]
+}
+
+export interface StationFlipPointResult {
+  index: number
+  pose: CartesianPose
+  pulses: number[]
+  degrees: number[]
+  reachable: boolean
+  withinLimits: boolean
+  positionErrorMm: number
+  orientationErrorDeg: number
+  rconf: number[]
+  rconfText: string
+  message: string
+  limitViolations: string[]
+}
+
+export interface ApplyStationFlipResult {
+  poses: CartesianPose[]
+  points: StationFlipPointResult[]
+  targetFrameId: number | null
+  saveBlocked: boolean
+  reachableCount: number
+  failedCount: number
+  recipe: StationFlipRecipe
 }
 
 export interface ReadUframeResult {
@@ -388,6 +480,18 @@ export const transformFrameFlip = (
   body: Omit<TransformFrameFlipRequest, "id" | "type">
 ): Promise<TransformFrameFlipResult> => {
   return kinRequest<TransformFrameFlipResult>({ type: "transform_frame_flip", ...body })
+}
+
+export const fitStationFlip = (
+  body: Omit<FitStationFlipRequest, "id" | "type">
+): Promise<FitStationFlipResult> => {
+  return kinRequest<FitStationFlipResult>({ type: "fit_station_flip", ...body })
+}
+
+export const applyStationFlip = (
+  body: Omit<ApplyStationFlipRequest, "id" | "type">
+): Promise<ApplyStationFlipResult> => {
+  return kinRequest<ApplyStationFlipResult>({ type: "apply_station_flip", ...body })
 }
 
 export const readUframe = (path: string): Promise<ReadUframeResult> => {

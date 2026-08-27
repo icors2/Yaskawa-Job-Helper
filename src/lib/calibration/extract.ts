@@ -15,6 +15,7 @@ const PAUSE_TAG_RE = /\b(STEP_[A-Z0-9_+-]+)\b/
 const MSG_TAG_RE = /MSG\s+"([^"]+)"/i
 const MOV_POS_RE =
   /\b(?:MOVJ|MOVL|MOVC|IMOV)\s+((?:C|BC|EC|P|BP|EX)0*\d+)\b/i
+const NUMBERED_COMMENT_RE = /^'(\d+)\s+(.+)$/
 
 export type ExtractedStepHit = {
   stepId: string
@@ -24,7 +25,7 @@ export type ExtractedStepHit = {
   frame?: CalibFrameType
   userFrameId?: number
   posRef?: string
-  source: "calstep" | "pause_tag" | "order"
+  source: "calstep" | "pause_tag" | "order" | "index"
 }
 
 export type JobExtractResult = {
@@ -72,6 +73,21 @@ const findPosVar = (
     }
   }
   return null
+}
+
+const findPosVarForIndex = (
+  groups: PosGroup[],
+  index: number,
+  pulseMode: boolean
+): { group: PosGroup; posVar: PosVar } | null => {
+  const cVar = findPosVar(groups, "C", index)
+  if (cVar) {
+    return cVar
+  }
+  if (pulseMode) {
+    return findPosVar(groups, "BC", index) ?? findPosVar(groups, "EC", index)
+  }
+  return findPosVar(groups, "P", index) ?? findPosVar(groups, "BP", index)
 }
 
 const parsePulseValues = (values: string[]): number[] | null => {
@@ -174,6 +190,13 @@ const listReferencedPosKeys = (job: JobFile): Set<string> => {
   return keys
 }
 
+const isTaughtKind = (kind: PosVarKind, pulseMode: boolean): boolean => {
+  if (pulseMode) {
+    return kind === "C" || kind === "BC" || kind === "EC"
+  }
+  return kind === "C" || kind === "P" || kind === "BP"
+}
+
 const listTaughtPosVars = (job: JobFile, pulseMode: boolean): Array<{
   group: PosGroup
   posVar: PosVar
@@ -184,11 +207,7 @@ const listTaughtPosVars = (job: JobFile, pulseMode: boolean): Array<{
   for (const group of job.posGroups) {
     for (const posVar of group.vars) {
       const key = `${posVar.kind}:${posVar.index}`
-      if (pulseMode) {
-        if (posVar.kind !== "C" && posVar.kind !== "BC" && posVar.kind !== "EC") {
-          continue
-        }
-      } else if (posVar.kind !== "P" && posVar.kind !== "BP") {
+      if (!isTaughtKind(posVar.kind, pulseMode)) {
         continue
       }
       // Prefer vars actually used in MOV*; else keep all of the right kind
@@ -202,11 +221,7 @@ const listTaughtPosVars = (job: JobFile, pulseMode: boolean): Array<{
   if (out.length === 0) {
     for (const group of job.posGroups) {
       for (const posVar of group.vars) {
-        if (pulseMode) {
-          if (posVar.kind !== "C" && posVar.kind !== "BC" && posVar.kind !== "EC") {
-            continue
-          }
-        } else if (posVar.kind !== "P" && posVar.kind !== "BP") {
+        if (!isTaughtKind(posVar.kind, pulseMode)) {
           continue
         }
         out.push({ group, posVar, key: `${posVar.kind}:${posVar.index}` })
@@ -214,6 +229,18 @@ const listTaughtPosVars = (job: JobFile, pulseMode: boolean): Array<{
     }
   }
   return out
+}
+
+const countCVars = (job: JobFile): number => {
+  let count = 0
+  for (const group of job.posGroups) {
+    for (const posVar of group.vars) {
+      if (posVar.kind === "C") {
+        count += 1
+      }
+    }
+  }
+  return count
 }
 
 const hitFromPos = (
@@ -240,49 +267,12 @@ const hitFromPos = (
   return { stepId, pauseTag, cartesian, frame, userFrameId, posRef, source }
 }
 
-/**
- * Extract taught positions from one CAL STANDARD or RELATIVE job.
- * Matching priority: CALSTEP:<id> → pauseTag (STEP_*) → position order.
- */
-export const extractFromCalibrationJob = (
-  text: string,
+const collectTaggedHits = (
+  job: JobFile,
   steps: CalibrationStepDef[],
-  expected: "standard" | "relative" | "auto" = "auto",
-  nameHint = "CAL"
-): JobExtractResult => {
-  const job = parseJob(text, nameHint)
-  const warnings: string[] = []
-  const npos = nposMismatch(job)
-  const postype = primaryPostype(job)
-  const userFrameId = primaryUserFrame(job)
-
-  let kind: JobExtractResult["kind"] = "unknown"
-  if (expected === "standard") {
-    kind = "standard"
-  } else if (expected === "relative") {
-    kind = "relative"
-  } else if (postype === "PULSE") {
-    kind = "standard"
-  } else if (postype === "USER" || postype === "BASE" || postype === "ROBOT") {
-    kind = "relative"
-  } else if (/STANDARD/i.test(job.name)) {
-    kind = "standard"
-  } else if (/RELATIVE/i.test(job.name)) {
-    kind = "relative"
-  }
-
-  if (kind === "standard" && postype !== "PULSE") {
-    warnings.push(
-      `STANDARD job expected ///POSTYPE PULSE but found ${postype || "missing"}`
-    )
-  }
-  if (kind === "relative" && postype === "PULSE") {
-    warnings.push(
-      "RELATIVE job expected USER/BASE cartesian POSTYPE but found PULSE"
-    )
-  }
-
-  const pulseMode = kind !== "relative"
+  pulseMode: boolean,
+  warnings: string[]
+): Map<string, ExtractedStepHit> => {
   const hitsByStep = new Map<string, ExtractedStepHit>()
   let current: { stepId: string; pauseTag?: string; source: "calstep" | "pause_tag" } | null =
     null
@@ -325,56 +315,199 @@ export const extractFromCalibrationJob = (
       hitsByStep.set(hit.stepId, hit)
     }
   }
+  return hitsByStep
+}
 
-  // Order fallback for steps still missing a hit
+const fillRemainingByOrder = (
+  job: JobFile,
+  steps: CalibrationStepDef[],
+  pulseMode: boolean,
+  hitsByStep: Map<string, ExtractedStepHit>,
+  warnings: string[]
+): void => {
   const missingAfterTags = steps.filter((step) => !hitsByStep.has(step.id))
-  let usedOrderFallback = false
-  if (missingAfterTags.length > 0) {
-    const taught = listTaughtPosVars(job, pulseMode)
-    const usedKeys = new Set<string>()
-    for (const hit of hitsByStep.values()) {
-      if (!hit.posRef) {
-        continue
-      }
-      const parsed = parsePosKindIndex(hit.posRef)
-      if (parsed) {
-        usedKeys.add(`${parsed.kind}:${parsed.index}`)
-      }
+  if (missingAfterTags.length === 0) {
+    return
+  }
+  const taught = listTaughtPosVars(job, pulseMode)
+  const usedKeys = new Set<string>()
+  for (const hit of hitsByStep.values()) {
+    if (!hit.posRef) {
+      continue
     }
-    let teachIdx = 0
-    for (const step of missingAfterTags) {
-      while (teachIdx < taught.length) {
-        const row = taught[teachIdx]
-        teachIdx += 1
-        if (usedKeys.has(row.key)) {
-          continue
-        }
-        const hit = hitFromPos(
-          step.id,
-          step.pauseTag,
-          "order",
-          row.group,
-          row.posVar,
-          pulseMode
-        )
-        if (hit) {
-          hitsByStep.set(step.id, hit)
-          usedKeys.add(row.key)
-          usedOrderFallback = true
-          break
-        }
-      }
-    }
-    if (usedOrderFallback) {
-      warnings.push(
-        "Some steps had no CALSTEP/pause tag match; order-based fill used where possible"
-      )
+    const parsed = parsePosKindIndex(hit.posRef)
+    if (parsed) {
+      usedKeys.add(`${parsed.kind}:${parsed.index}`)
     }
   }
+  let teachIdx = 0
+  let usedOrderFallback = false
+  for (const step of missingAfterTags) {
+    while (teachIdx < taught.length) {
+      const row = taught[teachIdx]
+      teachIdx += 1
+      if (usedKeys.has(row.key)) {
+        continue
+      }
+      const hit = hitFromPos(
+        step.id,
+        step.pauseTag,
+        "order",
+        row.group,
+        row.posVar,
+        pulseMode
+      )
+      if (hit) {
+        hitsByStep.set(step.id, hit)
+        usedKeys.add(row.key)
+        usedOrderFallback = true
+        break
+      }
+    }
+  }
+  if (usedOrderFallback) {
+    warnings.push(
+      "Some steps had no CALSTEP/pause tag match; order-based fill used where possible"
+    )
+  }
+}
+
+const fillByIndex = (
+  job: JobFile,
+  steps: CalibrationStepDef[],
+  pulseMode: boolean,
+  hitsByStep: Map<string, ExtractedStepHit>,
+  warnings: string[]
+): void => {
+  const cCount = countCVars(job)
+  if (cCount > 0 && cCount !== steps.length) {
+    warnings.push(`Position count ${cCount} vs checklist ${steps.length}`)
+  }
+  steps.forEach((step, index) => {
+    if (hitsByStep.has(step.id)) {
+      return
+    }
+    const found = findPosVarForIndex(job.posGroups, index, pulseMode)
+    if (!found) {
+      return
+    }
+    const hit = hitFromPos(
+      step.id,
+      step.pauseTag,
+      "index",
+      found.group,
+      found.posVar,
+      pulseMode
+    )
+    if (hit) {
+      hitsByStep.set(step.id, hit)
+    }
+  })
+}
+
+const verifyNumberedComments = (
+  job: JobFile,
+  steps: CalibrationStepDef[],
+  warnings: string[]
+): void => {
+  let pending: { n: number; text: string } | null = null
+  for (const line of job.instLines) {
+    const raw = line.raw.trimEnd()
+    const comment = NUMBERED_COMMENT_RE.exec(raw)
+    if (comment) {
+      pending = { n: Number.parseInt(comment[1], 10), text: comment[2].trim() }
+      continue
+    }
+    const mov = MOV_POS_RE.exec(raw)
+    if (!mov) {
+      if (line.kind !== "comment") {
+        pending = null
+      }
+      continue
+    }
+    if (!pending) {
+      continue
+    }
+    const parsed = parsePosKindIndex(mov[1])
+    if (!parsed) {
+      pending = null
+      continue
+    }
+    const step = steps[parsed.index]
+    if (!step) {
+      warnings.push(
+        `Numbered comment '${pending.n} ${pending.text} maps to missing step index ${parsed.index}`
+      )
+      pending = null
+      continue
+    }
+    const expectedN = parsed.index + 1
+    if (pending.n !== expectedN || pending.text !== step.exportLabel) {
+      warnings.push(
+        `Comment before ${mov[1]} expected '${expectedN} ${step.exportLabel} but found '${pending.n} ${pending.text}`
+      )
+    }
+    pending = null
+  }
+}
+
+/**
+ * Extract taught positions from one CAL STANDARD or RELATIVE job.
+ * Primary: C000nn index → steps[n], verified against numbered comments.
+ * Fallback: CALSTEP:<id> → pauseTag (STEP_*) → MOV order (older jobs).
+ */
+export const extractFromCalibrationJob = (
+  text: string,
+  steps: CalibrationStepDef[],
+  expected: "standard" | "relative" | "auto" = "auto",
+  nameHint = "CAL"
+): JobExtractResult => {
+  const job = parseJob(text, nameHint)
+  const warnings: string[] = []
+  const npos = nposMismatch(job)
+  const postype = primaryPostype(job)
+  const userFrameId = primaryUserFrame(job)
+
+  let kind: JobExtractResult["kind"] = "unknown"
+  if (expected === "standard") {
+    kind = "standard"
+  } else if (expected === "relative") {
+    kind = "relative"
+  } else if (postype === "PULSE") {
+    kind = "standard"
+  } else if (postype === "USER" || postype === "BASE" || postype === "ROBOT") {
+    kind = "relative"
+  } else if (/STANDARD/i.test(job.name)) {
+    kind = "standard"
+  } else if (/RELATIVE/i.test(job.name)) {
+    kind = "relative"
+  }
+
+  if (kind === "standard" && postype !== "PULSE") {
+    warnings.push(
+      `STANDARD job expected ///POSTYPE PULSE but found ${postype || "missing"}`
+    )
+  }
+  if (kind === "relative" && postype === "PULSE") {
+    warnings.push(
+      "RELATIVE job expected USER/BASE/ROBOT cartesian POSTYPE but found PULSE"
+    )
+  }
+
+  const pulseMode = kind !== "relative"
+  const taggedHits = collectTaggedHits(job, steps, pulseMode, warnings)
+  const hitsByStep = new Map(taggedHits)
+
+  if (taggedHits.size > 0) {
+    fillRemainingByOrder(job, steps, pulseMode, hitsByStep, warnings)
+  } else {
+    fillByIndex(job, steps, pulseMode, hitsByStep, warnings)
+  }
+  verifyNumberedComments(job, steps, warnings)
 
   if (hitsByStep.size === 0) {
     warnings.push(
-      "No taught positions matched. Ensure MOVL/MOVJ sits under each CALSTEP comment after pendant teach."
+      "No taught positions matched. Expected C000nn in index order with numbered comments, or ' CALSTEP:<id> on older jobs."
     )
   }
 
@@ -439,7 +572,7 @@ export const mergeJobHits = (
       frame: cartHit?.frame ?? "BASE",
       userFrameId: cartHit?.userFrameId ?? step.userFrameId,
       posRef: pulseHit?.posRef ?? cartHit?.posRef,
-      source: pulseHit?.source ?? cartHit?.source ?? "calstep"
+      source: pulseHit?.source ?? cartHit?.source ?? "index"
     })
     if (!pulseHit?.pulses) {
       missingPulseStepIds.push(step.id)

@@ -55,8 +55,15 @@ export interface CalibrationStepDef {
   axis?: JointAxis
   /** Present when kind is joint_limit. */
   direction?: JointLimitDirection
+  /**
+   * Pendant comment body without the leading `'N ` index.
+   * Copied from the YRC1000 reference jobs (`HOME POSTION` spelling included).
+   */
+  exportLabel: string
   seedPulses?: number[]
   seedCartesian?: CartesianPose
+  /** ///RCONF payload for RELATIVE export; consecutive equal values are grouped. */
+  seedRconf?: string
   required: boolean
   /** Operator may skip one side if the cell blocks that direction. Goal is both ± when safe. */
   skippable: boolean

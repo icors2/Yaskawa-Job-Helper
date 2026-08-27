@@ -56,10 +56,73 @@ pub struct SidecarStore {
 }
 
 fn exe_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("YASKAWA_PORTABLE_DIR") {
+        let path = PathBuf::from(dir);
+        if path.is_dir() {
+            return path;
+        }
+    }
+    if let Ok(appdir) = std::env::var("APPDIR") {
+        let bin = PathBuf::from(&appdir).join("usr").join("bin");
+        if bin.is_dir() {
+            return bin;
+        }
+        let root = PathBuf::from(appdir);
+        if root.is_dir() {
+            return root;
+        }
+    }
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(unix)]
+fn ensure_unix_executable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mut perms = meta.permissions();
+        let mode = perms.mode();
+        if mode & 0o111 == 0 {
+            perms.set_mode(mode | 0o755);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn spawn_via_elf_loader(bin: &PathBuf) -> Result<KinSidecar, String> {
+    let loaders = [
+        "/lib64/ld-linux-x86-64.so.2",
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    ];
+    let mut last_err = format!("no ELF loader found for {}", bin.display());
+    for loader in loaders {
+        if !std::path::Path::new(loader).exists() {
+            continue;
+        }
+        match Command::new(loader)
+            .arg(bin)
+            .env("PYTHONUNBUFFERED", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let stdin = child.stdin.take().ok_or("sidecar stdin missing")?;
+                let stdout = child.stdout.take().ok_or("sidecar stdout missing")?;
+                return Ok(KinSidecar {
+                    child,
+                    stdin,
+                    stdout: BufReader::new(stdout),
+                });
+            }
+            Err(err) => last_err = format!("spawn {loader}: {err}"),
+        }
+    }
+    Err(last_err)
 }
 
 fn server_script() -> PathBuf {
@@ -87,20 +150,48 @@ fn portable_kin_exe() -> Option<PathBuf> {
 }
 
 fn spawn_kin_binary(bin: &PathBuf) -> Result<KinSidecar, String> {
-    let mut child = Command::new(bin)
+    #[cfg(unix)]
+    ensure_unix_executable(bin);
+
+    let spawned = Command::new(bin)
         .env("PYTHONUNBUFFERED", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("spawn {}: {err}", bin.display()))?;
-    let stdin = child.stdin.take().ok_or("sidecar stdin missing")?;
-    let stdout = child.stdout.take().ok_or("sidecar stdout missing")?;
-    Ok(KinSidecar {
-        child,
-        stdin,
-        stdout: BufReader::new(stdout),
-    })
+        .spawn();
+
+    match spawned {
+        Ok(mut child) => {
+            let stdin = child.stdin.take().ok_or("sidecar stdin missing")?;
+            let stdout = child.stdout.take().ok_or("sidecar stdout missing")?;
+            Ok(KinSidecar {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+            })
+        }
+        Err(err) => {
+            #[cfg(unix)]
+            {
+                if let Ok(sidecar) = spawn_via_elf_loader(bin) {
+                    return Ok(sidecar);
+                }
+            }
+            Err(format!("spawn {}: {err}", bin.display()))
+        }
+    }
+}
+
+fn start_python_sidecar(script: &PathBuf) -> Result<KinSidecar, String> {
+    let pythons = ["python3", "python", "py"];
+    let mut last_err = String::from("no Python interpreter found");
+    for python in pythons {
+        match KinSidecar::spawn(python, script) {
+            Ok(sidecar) => return Ok(sidecar),
+            Err(err) => last_err = err,
+        }
+    }
+    Err(last_err)
 }
 
 fn start_sidecar() -> Result<KinSidecar, String> {
@@ -113,14 +204,11 @@ fn start_sidecar() -> Result<KinSidecar, String> {
     let script = server_script();
     if !script.exists() {
         return Err(format!(
-            "missing kinematics sidecar (no yaskawa-kin.exe beside the app, and no {})",
+            "missing kinematics sidecar (no yaskawa-kin / yaskawa-kin.exe beside the app, and no {})",
             script.display()
         ));
     }
-    match KinSidecar::spawn("python", &script) {
-        Ok(sidecar) => Ok(sidecar),
-        Err(_) => KinSidecar::spawn("py", &script),
-    }
+    start_python_sidecar(&script)
 }
 
 fn with_sidecar<F>(store: &SidecarStore, mut action: F) -> Result<String, String>

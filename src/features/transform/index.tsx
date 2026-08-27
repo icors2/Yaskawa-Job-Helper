@@ -5,16 +5,28 @@ import {
   previewFrameFlipJob,
   previewMirrorJob,
   previewOffsetJob,
+  previewStationFlipJob,
+  fitStationFlipFromPair,
+  type StationFlipPreview,
   type StationSide
 } from "../../lib/jbi/frameTransform"
 import { readTextFile, writeOutputFile, type JbiEntry } from "../../lib/fs/desktop"
 import {
   readUframe,
   type CartesianPose,
+  type FitStationFlipResult,
   type MirrorPlane,
+  type StationFlipRecipe,
   type UserFrame
 } from "../../lib/kin/client"
-import { getActiveProfile, getRobotInstallGate } from "../../lib/robot/profile"
+import {
+  getActiveProfile,
+  getRobotInstallGate,
+  jobFamilyKey,
+  loadProfilesStore,
+  syncActiveProfileToSidecar,
+  upsertStationFlipRecipe
+} from "../../lib/robot/profile"
 import {
   DEFAULT_PULSE_MIRROR_SIGNS,
   loadPulseMirrorPrefs,
@@ -36,10 +48,20 @@ import { FlipAssistDemo } from "./FlipAssistDemo"
  * Frame convert (Flip) remaps cartesian poses between two BUSER frames via
  * P_new = inv(UF_new) @ UF_old @ P_old (+ optional tool Z 180°).
  *
+ * Station flip (mirror) learns Lx + tool correction from a known-good S1/S2
+ * pair, reflects in station UF (x′ = Lx − x), IK-checks reach, and writes
+ * per-point ///RCONF. Unreachable points block save.
+ *
  * After Preview, Write to output folder uses writeOutputFile (output tree only; never source).
  */
 
-type TransformMode = "mirror" | "transfer" | "offset" | "singleSide" | "frameFlip"
+type TransformMode =
+  | "mirror"
+  | "transfer"
+  | "offset"
+  | "singleSide"
+  | "frameFlip"
+  | "stationFlip"
 
 const ZERO_POSE: CartesianPose = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 }
 
@@ -105,6 +127,9 @@ const deriveOutName = (args: {
   if (args.mode === "frameFlip") {
     return `${stem}_FLIP_UF${args.targetFrameId}.JBI`
   }
+  if (args.mode === "stationFlip") {
+    return `${stem}_STFLIP_UF${args.targetFrameId}.JBI`
+  }
   if (args.mode === "mirror") {
     return `${stem}_M${args.mirrorPlane}.JBI`
   }
@@ -157,11 +182,22 @@ export const TransformPage = ({
       return false
     }
   })
+  const [stationRecipeId, setStationRecipeId] = useState("")
+  const [stationRecipeName, setStationRecipeName] = useState("")
+  const [fitSourcePath, setFitSourcePath] = useState("")
+  const [fitTargetPath, setFitTargetPath] = useState("")
+  const [fitResult, setFitResult] = useState<FitStationFlipResult | null>(null)
+  const [reachReport, setReachReport] = useState<StationFlipPreview["reachReport"]>([])
+  const [saveBlocked, setSaveBlocked] = useState(false)
+  const [familyWarning, setFamilyWarning] = useState<string | null>(null)
 
   const installGate = getRobotInstallGate()
   const writeGate = getEditWriteGate()
   const activeProfile = getActiveProfile()
-  const canSave = Boolean(preview.trim()) && writeGate.allowed
+  const stationRecipes = activeProfile?.stationFlipRecipes ?? []
+  const selectedRecipe =
+    stationRecipes.find((recipe) => recipe.id === stationRecipeId) ?? null
+  const canSave = Boolean(preview.trim()) && writeGate.allowed && !saveBlocked
 
   const handleJobPickerToggle = (
     event: SyntheticEvent<HTMLDetailsElement>
@@ -255,13 +291,16 @@ export const TransformPage = ({
   const activeJob = jobs.find((job) => job.path === jobPath) ?? null
   const displayName = activeJob?.name ?? (jobPath ? jobBaseName(jobPath) : null)
 
-  const demoPlane = mode === "singleSide" ? singleSidePlane : mirrorPlane
+  const demoPlane = mode === "singleSide" ? singleSidePlane : mode === "stationFlip" ? "YZ" : mirrorPlane
 
   const clearPreview = () => {
     setPreview("")
     setDiffText("")
     setOutName("")
     setRconfReview(false)
+    setReachReport([])
+    setSaveBlocked(false)
+    setFamilyWarning(null)
   }
 
   const suggestedOutName = (label?: string): string =>
@@ -274,11 +313,30 @@ export const TransformPage = ({
       stationSide
     })
 
+  const suggestS2Mate = (sourcePath: string): string => {
+    const stem = jobStem(sourcePath)
+    const mateStem = stem
+      .replace(/([_-])S1(?=([_-]|$))/i, "$1S2")
+      .replace(/S1$/i, "S2")
+    if (mateStem === stem) {
+      return ""
+    }
+    const mate = jobs.find((job) => jobStem(job.path).toUpperCase() === mateStem.toUpperCase())
+    return mate?.path ?? ""
+  }
+
   const handleSelectJob = (path: string) => {
     setJobPath(path)
     onActiveJobChange?.(path)
     clearPreview()
     setStatus(`Transforming: ${jobBaseName(path)}`)
+    if (!fitSourcePath) {
+      setFitSourcePath(path)
+    }
+    const mate = suggestS2Mate(path)
+    if (mate && !fitTargetPath) {
+      setFitTargetPath(mate)
+    }
   }
 
   const ensureGate = (): boolean => {
@@ -325,6 +383,12 @@ export const TransformPage = ({
     if (next === "frameFlip") {
       setStatus(
         "Frame convert (Flip) — remap cartesian poses from current UF BUSER → target UF BUSER (homogeneous). Tool Z 180° on by default."
+      )
+      return
+    }
+    if (next === "stationFlip") {
+      setStatus(
+        "Station flip (mirror) — fit Lx from a known-good S1/S2 pair, then apply. Save is blocked if any point fails IK or joint limits."
       )
       return
     }
@@ -484,9 +548,113 @@ export const TransformPage = ({
     }
   }
 
+  const handleStationFlipFit = async () => {
+    if (!ensureGate()) {
+      return
+    }
+    const sourcePath = fitSourcePath.trim() || jobPath
+    const targetPath = fitTargetPath.trim()
+    if (!sourcePath || !targetPath) {
+      setStatus("Pick a known-good S1 job and its S2 counterpart to fit a station-flip recipe.")
+      return
+    }
+    try {
+      await syncActiveProfileToSidecar()
+      const sourceText = await readTextFile(sourcePath)
+      const targetText = await readTextFile(targetPath)
+      const result = await fitStationFlipFromPair({
+        sourceText,
+        targetText,
+        sourceFrameId,
+        targetFrameId,
+        sourceJobName: jobStem(sourcePath),
+        targetJobName: jobStem(targetPath)
+      })
+      setFitResult(result)
+      if (result.accepted && result.recipe) {
+        const family = result.recipe.jobFamily || jobFamilyKey(sourcePath)
+        const lx = result.recipe.offset[0]?.toFixed(1) ?? "?"
+        const autoName = `${family || "station"} Lx ${lx} mm`
+        setStationRecipeName((prev) => prev.trim() || autoName)
+        setStatus(result.message)
+      } else {
+        setStatus(result.message)
+      }
+    } catch (error) {
+      setFitResult(null)
+      setStatus(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const handleSaveStationRecipe = () => {
+    if (!fitResult?.accepted || !fitResult.recipe) {
+      setStatus("Fit a valid station-flip recipe before saving it to the profile.")
+      return
+    }
+    const profile = getActiveProfile()
+    if (!profile) {
+      setStatus("No active robot profile — complete robot install first.")
+      return
+    }
+    const name = stationRecipeName.trim() || `${jobFamilyKey(fitSourcePath || jobPath)} station flip`
+    const stored: StationFlipRecipe = {
+      ...fitResult.recipe,
+      id: crypto.randomUUID(),
+      name,
+      fittedAt: new Date().toISOString(),
+      sourceFrameId: fitResult.recipe.sourceFrameId ?? sourceFrameId,
+      targetFrameId: fitResult.recipe.targetFrameId ?? targetFrameId,
+      jobFamily: fitResult.recipe.jobFamily || jobFamilyKey(fitSourcePath || jobPath)
+    }
+    upsertStationFlipRecipe(loadProfilesStore(), profile.id, stored)
+    setStationRecipeId(stored.id ?? "")
+    setStatus(`Saved recipe “${name}” on profile ${profile.displayName}.`)
+  }
+
+  const handleStationFlipPreview = async () => {
+    if (!ensureGate() || !ensureJobPath()) {
+      return
+    }
+    const recipe = selectedRecipe ?? (fitResult?.accepted ? fitResult.recipe : null)
+    if (!recipe) {
+      setStatus("Select a saved recipe or fit one from a reference pair before preview.")
+      return
+    }
+    try {
+      await syncActiveProfileToSidecar()
+      const original = await readTextFile(jobPath)
+      const result = await previewStationFlipJob({
+        originalText: original,
+        recipe,
+        sourceFrameId,
+        targetFrameId,
+        sourceLabel: jobPath
+      })
+      const nextOut = suggestedOutName()
+      applyPreviewResult(result.after, result.diffText, nextOut)
+      setReachReport(result.reachReport)
+      setSaveBlocked(result.saveBlocked)
+      setFamilyWarning(result.familyWarning)
+      setRconfReview(false)
+      const failNote = result.saveBlocked
+        ? ` ${result.failedCount} point(s) failed IK or joint limits — save is blocked.`
+        : ` All ${result.reachableCount} point(s) reachable.`
+      const familyNote = result.familyWarning ? ` ${result.familyWarning}` : ""
+      setStatus(
+        `Station flip preview: UF${sourceFrameId} → UF${targetFrameId}, ${result.poseCount} pose(s).${failNote}${familyNote} Review the diff, then Write as ${nextOut}.`
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const handleSave = async () => {
     if (!preview.trim()) {
       setStatus("Run Preview first — Save stays disabled until a transform preview exists.")
+      return
+    }
+    if (saveBlocked) {
+      setStatus("Save is blocked — one or more flipped points failed IK or a joint limit. See the reach report.")
       return
     }
     if (!writeGate.allowed) {
@@ -528,7 +696,8 @@ export const TransformPage = ({
         <h1 className="text-lg font-semibold text-fg">Transform</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted">
           Station operations: <span className="text-fg/90">Transfer</span> (identical fixtures),{" "}
-          <span className="text-fg/90">Frame convert (Flip)</span> (remap cartesian between UF
+          <span className="text-fg/90">Station flip (mirror)</span> (S1↔S2 reflection fitted from a
+          pair), <span className="text-fg/90">Frame convert (Flip)</span> (remap cartesian between UF
           BUSER poses), <span className="text-fg/90">Mirror</span> (mirrored fixtures),{" "}
           <span className="text-fg/90">Single-side mirror</span> (same ///USER), and{" "}
           <span className="text-fg/90">Offset</span>. Prefer cartesian USER/BASE jobs for Flip and
@@ -643,6 +812,7 @@ export const TransformPage = ({
         {(
           [
             { id: "transfer" as const, label: "Transfer to new userframe" },
+            { id: "stationFlip" as const, label: "Station flip (mirror)" },
             { id: "frameFlip" as const, label: "Frame convert (Flip)" },
             { id: "mirror" as const, label: "Mirror" },
             { id: "singleSide" as const, label: "Single-side mirror" },
@@ -715,6 +885,185 @@ export const TransformPage = ({
               className="btn-primary self-end"
             >
               Preview transfer
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {mode === "stationFlip" ? (
+        <div className="rounded border border-border bg-bg/50 p-4">
+          <h2 className="text-sm font-semibold text-fg">Station flip (mirror)</h2>
+          <p className="mt-1 text-sm text-muted">
+            Learn the S1↔S2 reflection from a known-good pair, then apply it to the loaded job.
+            In station UF coords:{" "}
+            <span className="font-mono text-xs text-fg/80">x′ = Lx − x</span>, tool Y flipped.
+            Output is <span className="font-mono text-fg/80">///POSTYPE USER</span> on the target
+            frame with per-point <span className="font-mono text-fg/80">///RCONF</span>. Unreachable
+            or limit-violating points block save. A recipe is only valid for the fixture family it
+            was fitted on.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-3">
+            <label className="flex flex-col gap-1 text-sm text-fg/80">
+              Source UF#
+              <input
+                type="number"
+                aria-label="Source user frame for station flip"
+                className="w-24 rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-sm"
+                value={sourceFrameId}
+                onChange={(event) => setSourceFrameId(Number.parseInt(event.target.value, 10) || 2)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-fg/80">
+              Target UF#
+              <input
+                type="number"
+                aria-label="Target user frame for station flip"
+                className="w-24 rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-sm"
+                value={targetFrameId}
+                onChange={(event) => setTargetFrameId(Number.parseInt(event.target.value, 10) || 3)}
+              />
+            </label>
+            <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-sm text-fg/80">
+              Saved recipe
+              <select
+                aria-label="Saved station flip recipe"
+                className="rounded border border-border-strong bg-bg px-2 py-1.5 font-mono text-xs"
+                value={stationRecipeId}
+                onChange={(event) => setStationRecipeId(event.target.value)}
+              >
+                <option value="">— none (fit a pair first) —</option>
+                {stationRecipes.map((recipe) => (
+                  <option key={recipe.id ?? recipe.name} value={recipe.id ?? ""}>
+                    {recipe.name || recipe.jobFamily || "untitled"}
+                    {typeof recipe.offset?.[0] === "number"
+                      ? ` (Lx ${recipe.offset[0].toFixed(1)} mm)`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-4 rounded border border-border-strong/70 bg-bg/40 p-3">
+            <h3 className="text-sm font-semibold text-fg">Fit from reference pair</h3>
+            <p className="mt-1 text-xs text-muted">
+              Choose a re-taught S1 job and its S2 counterpart (same point order). Transfer-only
+              copies and same-UF jobs are rejected.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs text-muted">
+                S1 reference (source)
+                <select
+                  aria-label="Station flip S1 reference job"
+                  className="input-field font-mono text-xs"
+                  value={fitSourcePath}
+                  onChange={(event) => {
+                    const next = event.target.value
+                    setFitSourcePath(next)
+                    const mate = suggestS2Mate(next)
+                    if (mate) {
+                      setFitTargetPath(mate)
+                    }
+                  }}
+                >
+                  <option value="">— choose S1 job —</option>
+                  {filteredJobs.map((job) => (
+                    <option key={`s1-${job.path}`} value={job.path}>
+                      {job.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs text-muted">
+                S2 reference (taught counterpart)
+                <select
+                  aria-label="Station flip S2 reference job"
+                  className="input-field font-mono text-xs"
+                  value={fitTargetPath}
+                  onChange={(event) => setFitTargetPath(event.target.value)}
+                >
+                  <option value="">— choose S2 job —</option>
+                  {filteredJobs.map((job) => (
+                    <option key={`s2-${job.path}`} value={job.path}>
+                      {job.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                aria-label="Fit station flip from reference pair"
+                onClick={() => void handleStationFlipFit()}
+                className="btn-secondary self-end text-xs"
+              >
+                Fit from reference pair
+              </button>
+            </div>
+            {fitResult ? (
+              <div className="mt-3 text-sm" role="status">
+                <p className={fitResult.accepted ? "text-fg/90" : "text-warn"}>
+                  {fitResult.message}
+                </p>
+                {fitResult.accepted && fitResult.recipe ? (
+                  <ul className="mt-1 font-mono text-xs text-muted">
+                    <li>
+                      Lx,Ly,Lz: {fitResult.recipe.offset.map((v) => v.toFixed(1)).join(", ")} mm
+                    </li>
+                    <li>
+                      RMS {fitResult.positionRmsMm.toFixed(2)} mm /{" "}
+                      {fitResult.orientationRmsDeg.toFixed(2)} deg · inliers {fitResult.inliers}/
+                      {fitResult.total} · det(R) {fitResult.detR.toFixed(3)}
+                    </li>
+                  </ul>
+                ) : null}
+                {fitResult.accepted ? (
+                  <div className="mt-2 flex flex-wrap items-end gap-2">
+                    <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-xs text-muted">
+                      Recipe name
+                      <input
+                        aria-label="Station flip recipe name"
+                        className="input-field font-mono text-xs"
+                        value={stationRecipeName}
+                        onChange={(event) => setStationRecipeName(event.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      aria-label="Save station flip recipe to robot profile"
+                      onClick={handleSaveStationRecipe}
+                      className="btn-secondary text-xs"
+                    >
+                      Save recipe to profile
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {selectedRecipe ? (
+            <p className="mt-3 text-xs text-muted" role="status">
+              Using recipe {selectedRecipe.name ?? "untitled"}
+              {selectedRecipe.sourceJobName
+                ? ` (fitted from ${selectedRecipe.sourceJobName} → ${selectedRecipe.targetJobName ?? "S2"})`
+                : ""}
+              {typeof selectedRecipe.offset?.[0] === "number"
+                ? ` · Lx ${selectedRecipe.offset[0].toFixed(1)} mm`
+                : ""}
+              {selectedRecipe.positionRmsMm != null
+                ? ` · RMS ${selectedRecipe.positionRmsMm.toFixed(2)} mm / ${selectedRecipe.orientationRmsDeg.toFixed(2)} deg`
+                : ""}
+            </p>
+          ) : null}
+
+          <div className="mt-3">
+            <button
+              type="button"
+              aria-label="Preview station flip"
+              onClick={() => void handleStationFlipPreview()}
+              className="btn-primary"
+            >
+              Preview station flip
             </button>
           </div>
         </div>
@@ -1081,6 +1430,62 @@ export const TransformPage = ({
         {status}
         {rconfReview ? " RCONF must be reviewed on the pendant after mirror." : ""}
       </p>
+
+      {familyWarning ? (
+        <p
+          className="rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn"
+          role="status"
+        >
+          {familyWarning}
+        </p>
+      ) : null}
+
+      {saveBlocked ? (
+        <p
+          className="rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn"
+          role="status"
+        >
+          Save is blocked until every flipped point is reachable and within pulse limits.
+        </p>
+      ) : null}
+
+      {reachReport.length > 0 ? (
+        <div className="rounded border border-border bg-bg/50 p-3" aria-label="Station flip reach report">
+          <h2 className="text-sm font-semibold text-fg">Reach / RCONF report</h2>
+          <p className="mt-1 text-xs text-muted">
+            {reachReport.filter((row) => row.reachable).length}/{reachReport.length} reachable.
+            Consecutive points that share RCONF are grouped in the written job.
+          </p>
+          <div className="mt-2 max-h-48 overflow-auto">
+            <table className="w-full text-left font-mono text-[11px] text-fg/80">
+              <thead>
+                <tr className="text-muted">
+                  <th scope="col" className="pr-2">#</th>
+                  <th scope="col" className="pr-2">OK</th>
+                  <th scope="col" className="pr-2">err mm</th>
+                  <th scope="col" className="pr-2">err deg</th>
+                  <th scope="col" className="pr-2">RCONF</th>
+                  <th scope="col">note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reachReport.map((row) => (
+                  <tr key={row.index} className={row.reachable ? "" : "text-warn"}>
+                    <td className="pr-2">{row.index}</td>
+                    <td className="pr-2">{row.reachable ? "yes" : "no"}</td>
+                    <td className="pr-2">{row.positionErrorMm.toFixed(2)}</td>
+                    <td className="pr-2">{row.orientationErrorDeg.toFixed(2)}</td>
+                    <td className="pr-2 whitespace-nowrap">
+                      {row.rconfText.split(",").slice(0, 5).join(",")}
+                    </td>
+                    <td>{row.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       {!writeGate.allowed ? (
         <p

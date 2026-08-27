@@ -42,5 +42,6 @@ Copy-Item -Path (Join-Path $Src "*") -Destination $Dest -Recurse -Force
 Write-Host ""
 Write-Host "Installed portable app to:" -ForegroundColor Green
 Write-Host "  $Dest"
-Write-Host "Run:  $Dest\Run.bat"
-Write-Host "Or:   $Dest\Yaskawa Job Editor.exe"
+Write-Host "Windows:  $Dest\Run.bat"
+Write-Host "       or $Dest\Yaskawa Job Editor.exe"
+Write-Host "Ubuntu:   bash `"$Dest\Yaskawa Job Editor.sh`""

@@ -11,8 +11,11 @@ import {
   loadProfile,
   scanBackup,
   type RobotProfile,
-  type ScanBackupResult
+  type ScanBackupResult,
+  type StationFlipRecipe
 } from "../kin/client"
+
+export type { StationFlipRecipe }
 
 export const ROBOT_PROFILES_STORAGE_KEY = "yaskawa.robot.profiles.v1"
 export const ROBOT_PROFILES_FILENAME = "profiles/robot_profiles.json"
@@ -226,6 +229,62 @@ export const attachCalibrationToActiveProfile = (
     updatedAt: new Date().toISOString()
   }
   return upsertProfile(store, next, true)
+}
+
+export const jobFamilyKey = (name: string): string => {
+  const stem = name.replace(/\\/g, "/").split("/").pop() ?? name
+  const noExt = stem.replace(/\.jbi$/i, "")
+  const noSide = noExt.replace(/[_-]S[12](?=(_|$))/gi, "")
+  return noSide.split(/[_-]STEP/i)[0].replace(/[_-]+$/g, "").toUpperCase()
+}
+
+export const upsertStationFlipRecipe = (
+  store: RobotProfilesStore,
+  profileId: string,
+  recipe: StationFlipRecipe
+): RobotProfilesStore => {
+  const profile = store.profiles.find((entry) => entry.id === profileId)
+  if (!profile) {
+    throw new Error("Profile not found")
+  }
+  const recipes = [...(profile.stationFlipRecipes ?? [])]
+  const idx = recipes.findIndex((entry) => entry.id && entry.id === recipe.id)
+  if (idx >= 0) {
+    recipes[idx] = recipe
+  } else {
+    recipes.push(recipe)
+  }
+  return upsertProfile(
+    store,
+    {
+      ...profile,
+      stationFlipRecipes: recipes,
+      updatedAt: new Date().toISOString()
+    },
+    true
+  )
+}
+
+export const deleteStationFlipRecipe = (
+  store: RobotProfilesStore,
+  profileId: string,
+  recipeId: string
+): RobotProfilesStore => {
+  const profile = store.profiles.find((entry) => entry.id === profileId)
+  if (!profile) {
+    throw new Error("Profile not found")
+  }
+  return upsertProfile(
+    store,
+    {
+      ...profile,
+      stationFlipRecipes: (profile.stationFlipRecipes ?? []).filter(
+        (entry) => entry.id !== recipeId
+      ),
+      updatedAt: new Date().toISOString()
+    },
+    true
+  )
 }
 
 export const syncActiveProfileToSidecar = async (

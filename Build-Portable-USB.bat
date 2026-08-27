@@ -17,6 +17,8 @@ if errorlevel 1 (
 
 echo.
 echo Package is in: portable\YaskawaJobEditor\
-echo Next: double-click Install-Portable-to-D.bat  ^(or pass another drive^)
+echo Windows: double-click Install-Portable-to-D.bat  ^(or pass another drive^)
+echo Ubuntu:  Linux binaries are added by Build-Portable-USB.sh on Ubuntu/WSL.
+echo          The USB file to open there is "Yaskawa Job Editor.sh".
 pause
 endlocal

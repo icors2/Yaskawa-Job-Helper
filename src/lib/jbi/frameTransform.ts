@@ -2,13 +2,18 @@ import { parseJob } from "../jbi/parse"
 import { serializeJob } from "../jbi/serialize"
 import { unifiedDiff } from "../jbi/diff"
 import {
+  applyStationFlip,
+  fitStationFlip,
   transformFrame,
   transformMirror,
   transformOffset,
   transformFrameFlip,
   type CartesianPose,
-  type MirrorPlane
+  type FitStationFlipResult,
+  type MirrorPlane,
+  type StationFlipRecipe
 } from "../kin/client"
+import { jobFamilyKey } from "../robot/profile"
 import {
   applyPulseAxisSigns,
   type PulseMirrorAxisSigns
@@ -725,6 +730,204 @@ export const previewFrameFlipJob = async (args: {
     applyToolZFlip,
     warnings,
     skippedPulse: pulseRows.length
+  }
+}
+
+export interface StationFlipReachRow {
+  index: number
+  reachable: boolean
+  withinLimits: boolean
+  positionErrorMm: number
+  orientationErrorDeg: number
+  rconfText: string
+  message: string
+}
+
+export interface StationFlipPreview extends FrameMovePreview {
+  saveBlocked: boolean
+  reachableCount: number
+  failedCount: number
+  reachReport: StationFlipReachRow[]
+  familyWarning: string | null
+}
+
+const rconfHeader = (text: string) => ({
+  key: "RCONF",
+  value: text,
+  raw: `///RCONF ${text}`
+})
+
+const emitUserPosesWithRconf = (
+  original: string,
+  poses: CartesianPose[],
+  rconfTexts: string[],
+  userFrameId: number,
+  nameSuffix: string,
+  sourceLabel?: string
+): FrameMovePreview => {
+  const job = parseJob(original)
+  const nposTool = job.posGroups[0]?.headers.filter((h) => h.key === "NPOS" || h.key === "TOOL") ?? []
+  const groups: typeof job.posGroups = []
+  let currentRconf = ""
+  for (let i = 0; i < poses.length; i += 1) {
+    const pose = poses[i]
+    const rconf = rconfTexts[i] || "1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
+    const idx = 100 + i
+    const formatted = formatPose(pose)
+    const posVar = {
+      kind: "P" as const,
+      index: idx,
+      values: formatted.split(","),
+      raw: `P${String(idx).padStart(5, "0")}=${formatted}`
+    }
+    if (groups.length === 0 || rconf !== currentRconf) {
+      currentRconf = rconf
+      const extra = groups.length === 0 ? nposTool : []
+      groups.push({
+        postype: "USER",
+        user: String(userFrameId),
+        tool: "0",
+        headers: [
+          ...extra,
+          { key: "USER", value: String(userFrameId), raw: `///USER ${userFrameId}` },
+          { key: "POSTYPE", value: "USER", raw: "///POSTYPE USER" },
+          { key: "RECTAN", value: "", raw: "///RECTAN" },
+          rconfHeader(rconf)
+        ],
+        vars: [posVar]
+      })
+    } else {
+      groups[groups.length - 1].vars.push(posVar)
+    }
+  }
+  job.posGroups = groups
+  const nextName = `${job.name}${nameSuffix}`
+  job.name = nextName
+  for (const header of job.headers) {
+    if (header.key === "NAME") {
+      header.value = nextName
+      header.raw = `//NAME ${nextName}`
+    }
+  }
+  const after = serializeJob(job, { recomputeNpos: true })
+  const outName = `${nextName}.JBI`
+  return {
+    before: original,
+    after,
+    outName,
+    diffText: unifiedDiff(original, after, sourceLabel ?? "source", outName),
+    poseCount: poses.length
+  }
+}
+
+export const fitStationFlipFromPair = async (args: {
+  sourceText: string
+  targetText: string
+  sourceFrameId: number
+  targetFrameId: number
+  sourceJobName?: string
+  targetJobName?: string
+  sourceUf?: CartesianPose
+  targetUf?: CartesianPose
+}): Promise<FitStationFlipResult> => {
+  const sourcePulses = collectPulseRows(args.sourceText)
+  const targetPulses = collectPulseRows(args.targetText)
+  const sourceCart = collectCartesianVars(args.sourceText)
+  const targetCart = collectCartesianVars(args.targetText)
+  const family = jobFamilyKey(args.sourceJobName ?? "")
+  if (sourcePulses.length > 0 && targetPulses.length > 0) {
+    return fitStationFlip({
+      sourcePulses,
+      targetPulses,
+      sourceFrameId: args.sourceFrameId,
+      targetFrameId: args.targetFrameId,
+      sourceUf: args.sourceUf,
+      targetUf: args.targetUf,
+      toolId: 0,
+      sourceJobName: args.sourceJobName,
+      targetJobName: args.targetJobName,
+      jobFamily: family
+    })
+  }
+  if (sourceCart.length > 0 && targetCart.length > 0) {
+    return fitStationFlip({
+      sourcePoses: sourceCart.map((ref) => ref.pose),
+      targetPoses: targetCart.map((ref) => ref.pose),
+      sourceFrameId: args.sourceFrameId,
+      targetFrameId: args.targetFrameId,
+      sourceUf: args.sourceUf,
+      targetUf: args.targetUf,
+      toolId: 0,
+      sourceJobName: args.sourceJobName,
+      targetJobName: args.targetJobName,
+      jobFamily: family
+    })
+  }
+  throw new Error(
+    "Reference pair needs PULSE C/P rows or USER/BASE cartesian poses on both jobs."
+  )
+}
+
+export const previewStationFlipJob = async (args: {
+  originalText: string
+  recipe: StationFlipRecipe
+  sourceFrameId: number
+  targetFrameId: number
+  sourceUf?: CartesianPose
+  targetUf?: CartesianPose
+  sourceLabel?: string
+}): Promise<StationFlipPreview> => {
+  const pulseRows = collectPulseRows(args.originalText)
+  const cartRefs = collectCartesianVars(args.originalText)
+  if (pulseRows.length === 0 && cartRefs.length === 0) {
+    throw new Error(
+      "Station flip needs PULSE C/P rows or USER/BASE cartesian poses in the source job."
+    )
+  }
+  const applied = await applyStationFlip({
+    recipe: args.recipe,
+    pulses: pulseRows.length > 0 ? pulseRows : undefined,
+    poses: pulseRows.length === 0 ? cartRefs.map((ref) => ref.pose) : undefined,
+    sourceFrameId: args.sourceFrameId,
+    targetFrameId: args.targetFrameId,
+    sourceUf: args.sourceUf,
+    targetUf: args.targetUf,
+    toolId: 0
+  })
+  const rconfTexts = applied.points.map(
+    (point) => point.rconfText || "1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
+  )
+  const preview = emitUserPosesWithRconf(
+    args.originalText,
+    applied.poses,
+    rconfTexts,
+    args.targetFrameId,
+    `_STFLIP_UF${args.targetFrameId}`,
+    args.sourceLabel
+  )
+  const currentFamily = jobFamilyKey(args.sourceLabel ?? "")
+  const recipeFamily = (args.recipe.jobFamily ?? "").trim()
+  let familyWarning: string | null = null
+  if (recipeFamily && currentFamily && recipeFamily !== currentFamily) {
+    familyWarning =
+      `Recipe was fitted on ${recipeFamily} (from ${args.recipe.sourceJobName ?? "a reference pair"}). ` +
+      `This job looks like ${currentFamily} — Lx may not transfer.`
+  }
+  return {
+    ...preview,
+    saveBlocked: applied.saveBlocked,
+    reachableCount: applied.reachableCount,
+    failedCount: applied.failedCount,
+    familyWarning,
+    reachReport: applied.points.map((point) => ({
+      index: point.index,
+      reachable: point.reachable,
+      withinLimits: point.withinLimits,
+      positionErrorMm: point.positionErrorMm,
+      orientationErrorDeg: point.orientationErrorDeg,
+      rconfText: point.rconfText,
+      message: point.message
+    }))
   }
 }
 

@@ -51,7 +51,7 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 | Action | Command |
 | --- | --- |
 | Start | `start.bat` → `npm run dev` (Tauri+Vite); PID in `.dev.pids`; optional `--install` |
-| Portable USB | `Build-Portable-USB.bat` → `portable/YaskawaJobEditor/`; `Install-Portable-to-D.bat` copies to `D:\YaskawaJobEditor\`. Sidecar prefers `yaskawa-kin.exe` beside the app exe. |
+| Portable USB | Same folder `portable/YaskawaJobEditor/` for both OSes. Windows: `Build-Portable-USB.bat` → `Run.bat` / `.exe`. Ubuntu: `./Build-Portable-USB.sh` → open `Yaskawa Job Editor.sh`. Sidecar prefers `yaskawa-kin.exe` or `yaskawa-kin` beside the app. |
 | Stop | `stop.bat` → kill tree from `.dev.pids`, then path-matched node/vite/tauri/cargo |
 | Dev port | **1420** (`vite.config.ts` `strictPort`); HMR 1421 if `TAURI_DEV_HOST` |
 | Vite-only | `npm run dev:vite` (no FS/sidecar) |
@@ -180,7 +180,8 @@ flowchart LR
 | `docs/MOTOMAN_DEVELOPER_FINDINGS.md` | Portal / INFORM / YMConnect research |
 | `docs/MOTOROS2.md` | MotoROS2 adopt vs ignore |
 | `start.bat` / `stop.bat` | Windows launchers |
-| `Build-Portable-USB.bat` / `Install-Portable-to-D.bat` | Portable USB package + copy to `D:\` |
+| `Build-Portable-USB.bat` / `Install-Portable-to-D.bat` | Windows portable USB package + copy to `D:\` |
+| `Build-Portable-USB.sh` / `scripts/install-portable-to-drive.sh` | Ubuntu portable USB package (same folder; does not replace Windows files) |
 
 ---
 
@@ -424,14 +425,14 @@ After changes, run the smallest sufficient set:
 - Transform modes: `features/transform/index.tsx`
 - Calibration steps: `lib/calibration/steps.ts` (home + S+/S− …)
 - Protocol methods: `lib/kin/client.ts` ↔ `server.py` header
-- Launchers: `start.bat`, `stop.bat`
+- Launchers: `start.bat`, `stop.bat`, portable `Run.bat` / `Yaskawa Job Editor.sh`
 - Gates: `getCalibrationGate`, `shouldForceSetup`, `isProfileSetupFinished`
 
 ---
 
 ## Status snapshot (2026-08-22)
 
-**Done:** Tauri scaffold; lossless JBI; library; Manual Editor + edit tests; Wizard; Diff/USB; multi-profile + ProfileGate + forced Setup; calibration UI + gate with **home-anchored ± safe joint limits** (CAL STANDARD/RELATIVE); Transform transfer/**Frame convert (Flip)**/mirror/**single-side mirror**/offset (+100 X fixture) + flip assist + **save previewed `.JBI` to output folder**; `fixtures/transform/`; kin sidecar FK/calib/transform/frame_flip/profile; YMConnect stub; MotoROS2 setup prefs; `start.bat`/`stop.bat`; GitHub repo `icors2/Yaskawa-Job-Helper`.
+**Done:** Tauri scaffold; lossless JBI; library; Manual Editor + edit tests; Wizard; Diff/USB; multi-profile + ProfileGate + forced Setup; calibration UI + gate with **home-anchored ± safe joint limits** (CAL STANDARD/RELATIVE); Transform transfer/**Frame convert (Flip)**/mirror/**single-side mirror**/offset (+100 X fixture) + flip assist + **save previewed `.JBI` to output folder**; `fixtures/transform/`; kin sidecar FK/calib/transform/frame_flip/profile; YMConnect stub; MotoROS2 setup prefs; `start.bat`/`stop.bat`; **portable USB Windows + Ubuntu in the same folder** (`Run.bat` / `Yaskawa Job Editor.sh`); GitHub repo `icors2/Yaskawa-Job-Helper`.
 
 **Not done:** live YMConnect cell; MotoROS2 ingest; bulk conversion import; full CALL auto-rewire; non-6-axis DH; calibrated pulse-axis mirror signs; **re-validate mirror/shift/Flip on real cartesian production jobs** (TODO).
 

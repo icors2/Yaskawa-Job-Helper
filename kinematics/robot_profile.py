@@ -265,6 +265,7 @@ class RobotProfile:
     updated_at: str
     calibration_id: str | None = None
     notes: list[str] = field(default_factory=list)
+    station_flip_recipes: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -293,6 +294,7 @@ class RobotProfile:
             "updatedAt": self.updated_at,
             "calibrationId": self.calibration_id,
             "notes": self.notes,
+            "stationFlipRecipes": self.station_flip_recipes,
         }
 
     @classmethod
@@ -330,6 +332,9 @@ class RobotProfile:
             updated_at=str(data.get("updatedAt") or data.get("updated_at") or _utc_now()),
             calibration_id=data.get("calibrationId") or data.get("calibration_id"),
             notes=list(data.get("notes") or []),
+            station_flip_recipes=list(
+                data.get("stationFlipRecipes") or data.get("station_flip_recipes") or []
+            ),
         )
 
     def to_params(self) -> AR2010Params:
@@ -441,6 +446,7 @@ def create_profile_from_backup(
         updated_at=now,
         calibration_id=None,
         notes=notes,
+        station_flip_recipes=[],
     )
 
 
