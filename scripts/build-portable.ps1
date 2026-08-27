@@ -15,7 +15,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
 $OutDir = Join-Path $Root "portable\YaskawaJobEditor"
-$ReleaseDir = Join-Path $Root "src-tauri\target\release"
+$ReleaseDir = Join-Path $Root "apps\desktop\src-tauri\target\release"
 $KinDist = Join-Path $Root "dist-kin"
 
 Write-Host "=== Yaskawa Job Editor - portable build ===" -ForegroundColor Cyan
@@ -85,7 +85,7 @@ if (-not $SkipKin) {
 
 if (-not $SkipTauri) {
   Write-Host "[3/4] Tauri release binary (no installer bundle)..." -ForegroundColor Yellow
-  npx tauri build --no-bundle
+  npm run tauri -w @yaskawa/desktop -- build --no-bundle
   if ($LASTEXITCODE -ne 0) {
     Write-Host "tauri build --no-bundle failed; trying full tauri build..." -ForegroundColor DarkYellow
     npm run build

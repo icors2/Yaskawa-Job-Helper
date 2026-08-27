@@ -1,7 +1,7 @@
 /**
  * Calibration JBI extract + golden export regression:
  * - fixtures/calibration/CAL_MINI_STANDARD.JBI + CAL_MINI_RELATIVE.JBI
- *   (CALSTEP fallback → home, S+, UF#2 RORG)
+ *   (CALSTEP fallback â†’ home, S+, UF#2 RORG)
  * - fixtures/calibration/CALIBRATION_STANDARD.JBI + CALIBRATION_RELATIVE.JBI
  *   (index-order extract + generator DATE-normalized byte match)
  */
@@ -11,18 +11,18 @@ import { fileURLToPath } from "node:url"
 import {
   extractCalibrationPair,
   mergeExtractionIntoSession
-} from "../src/lib/calibration/extract.ts"
+} from "@yaskawa/core/calibration/extract"
 import {
   buildCalibrationSteps,
   CALIBRATION_STEPS,
   defaultConfiguredFrames
-} from "../src/lib/calibration/steps.ts"
+} from "@yaskawa/core/calibration/steps"
 import {
   buildRelativeCalibrationJob,
   buildStandardCalibrationJob,
   type CalibrationJobNames
-} from "../src/lib/calibration/jobGenerator.ts"
-import { createEmptySession } from "../src/lib/calibration/session.ts"
+} from "@yaskawa/core/calibration/jobGenerator"
+import { createEmptySession } from "@yaskawa/core/calibration/session"
 
 const here = fileURLToPath(new URL(".", import.meta.url))
 const fixtures = join(here, "..", "fixtures", "calibration")

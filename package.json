@@ -3,43 +3,35 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "dev": "tauri dev",
-    "dev:vite": "vite",
-    "build": "tauri build",
-    "build:web": "tsc && vite build",
+    "dev": "npm run dev -w @yaskawa/desktop",
+    "dev:vite": "npm run dev:vite -w @yaskawa/desktop",
+    "build": "npm run build -w @yaskawa/desktop",
+    "build:web": "npm run build:web -w @yaskawa/desktop",
     "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "build:portable:linux": "bash scripts/build-portable.sh",
     "install:portable:d": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Install-Portable-to-Drive.ps1 -Drive D",
     "install:portable:linux": "bash scripts/install-portable-to-drive.sh",
-    "preview": "vite preview",
-    "tauri": "tauri",
+    "preview": "npm run preview -w @yaskawa/desktop",
+    "tauri": "npm run tauri -w @yaskawa/desktop",
     "kin": "python kinematics/server.py",
     "kin:bundle": "pyinstaller --noconfirm --onefile --name yaskawa-kin kinematics/server.py",
+    "kin:golden": "python kinematics/golden/generate.py",
     "test:kin": "python kinematics/test_kinematics.py",
+    "test:core": "npm run test -w @yaskawa/core",
     "test:transform": "tsx scripts/transform-test.ts",
     "test:roundtrip": "tsx scripts/roundtrip.ts",
     "test:edit": "tsx scripts/edit-test.ts",
     "test:calib-extract": "tsx scripts/calib-extract-test.ts",
+    "test:validate": "tsx scripts/validate-transforms.ts",
     "test:regression": "python kinematics/regression_s1_s2.py"
   },
-  "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2",
-    "diff": "^9.0.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
-  },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@tauri-apps/cli": "^2",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
-    "tailwindcss": "^4.3.3",
     "tsx": "^4.23.12",
-    "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "vitest": "^4.1.11"
+    "typescript": "~5.8.3"
   }
 }

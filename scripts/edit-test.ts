@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseJob } from "../src/lib/jbi/parse.ts"
-import { serializeJob } from "../src/lib/jbi/serialize.ts"
+import { parseJob } from "@yaskawa/core/jbi/parse"
+import { serializeJob } from "@yaskawa/core/jbi/serialize"
 import {
   buildWeldInventory,
   parseArcsrtNumbers,
   parseArcendNumbers,
   parseWeavNumbers
-} from "../src/lib/jbi/cnd.ts"
+} from "@yaskawa/core/jbi/cnd"
 import {
   deleteInstLines,
   flagInvalidWeldConditions,
@@ -19,7 +19,7 @@ import {
   scaleSpeeds,
   setSpeeds,
   setWeldConditions
-} from "../src/lib/jbi/edit.ts"
+} from "@yaskawa/core/jbi/edit"
 
 const here = fileURLToPath(new URL(".", import.meta.url))
 const repoRoot = join(here, "..")
@@ -29,11 +29,11 @@ let failed = 0
 
 const assert = (cond: boolean, message: string) => {
   if (cond) {
-    console.log(`ok — ${message}`)
+    console.log(`ok â€” ${message}`)
     return
   }
   failed += 1
-  console.error(`FAIL — ${message}`)
+  console.error(`FAIL â€” ${message}`)
 }
 
 const sample = `/JOB

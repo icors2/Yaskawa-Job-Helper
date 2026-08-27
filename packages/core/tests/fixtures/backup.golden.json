@@ -1,0 +1,223 @@
+{
+  "generatedBy": "kinematics/golden/generate.py",
+  "systemSysFile": "fixtures/SYSTEM.SYS",
+  "identity": {
+    "rawRobotLine": "R1 : 1-06VXH25-A1*(AR2010) STANDARD               0011_1111",
+    "robotModel": "AR2010",
+    "robotTypeCode": "1-06VXH25-A1",
+    "displayName": "AR2010",
+    "group": "R1",
+    "application": "ARC WELDING",
+    "systemNo": "YAS5.25.00A(EN)-00",
+    "controller": "YRC1000",
+    "groups": [
+      "R1 : 1-06VXH25-A1*(AR2010) STANDARD               0011_1111",
+      "S1 : TURN-1                                       0000_0001",
+      "S2 : TURN-1                                       0000_0001"
+    ]
+  },
+  "scanEntries": [
+    "JOBS/TCP_CHECK.JBI",
+    "RC.PRM",
+    "S1_90.JBI",
+    "SYSTEM.SYS",
+    "TOOL.CND",
+    "UFRAME.CND"
+  ],
+  "scan": {
+    "requiredNames": [
+      "SYSTEM.SYS",
+      "RC.PRM",
+      "TOOL.CND",
+      "UFRAME.CND"
+    ],
+    "requiredFound": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "recommendedNames": [
+      "RE.PRM",
+      "SV.PRM",
+      "ARCSRT.CND",
+      "ARCEND.CND",
+      "WEAV.CND",
+      "*.JBI (sample jobs)"
+    ],
+    "recommendedFound": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ],
+    "jbiCount": 2,
+    "missingRequired": [],
+    "ready": true
+  },
+  "profile": {
+    "robotId": "AR2010",
+    "displayName": "Golden AR2010",
+    "controller": "YRC1000",
+    "robotModel": "AR2010",
+    "robotTypeCode": "1-06VXH25-A1",
+    "rawSystemLine": "R1 : 1-06VXH25-A1*(AR2010) STANDARD               0011_1111",
+    "application": "ARC WELDING",
+    "status": "template_validated",
+    "linkLengthsMm": {
+      "a1": 150.0,
+      "a2": 760.0,
+      "a3": 200.0,
+      "d4": 1082.0,
+      "d6": 100.0
+    },
+    "pulsePerDeg": [
+      1341.3833333333334,
+      1907.6774193548388,
+      1592.89375,
+      1022.865,
+      980.24,
+      454.756043956044
+    ],
+    "pulseOffsets": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "pulseLimitsPos": [
+      241449.0,
+      295690.0,
+      254863.0,
+      204573.0,
+      147036.0,
+      206914.0
+    ],
+    "pulseLimitsNeg": [
+      -241449.0,
+      -200306.0,
+      -136989.0,
+      -204573.0,
+      -147036.0,
+      -206914.0
+    ],
+    "homePulses": [
+      0.0,
+      -75310.0,
+      1200.0,
+      0.0,
+      -127658.0,
+      -70.0
+    ],
+    "tool0": {
+      "x": -88.687,
+      "y": 0.981,
+      "z": 463.147,
+      "rx": 0.0,
+      "ry": -45.0,
+      "rz": 0.0
+    },
+    "framesSummary": [
+      {
+        "id": 1,
+        "name": "REAMER",
+        "toolId": 0
+      },
+      {
+        "id": 2,
+        "name": "S1",
+        "toolId": 0
+      },
+      {
+        "id": 3,
+        "name": "S2",
+        "toolId": 0
+      }
+    ],
+    "toolsSummary": [
+      {
+        "id": 0,
+        "name": "STANDARD TOOL",
+        "tcp": {
+          "x": -88.687,
+          "y": 0.981,
+          "z": 463.147,
+          "rx": 0.0,
+          "ry": -45.0,
+          "rz": 0.0
+        }
+      },
+      {
+        "id": 1,
+        "name": "",
+        "tcp": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "rx": 0.0,
+          "ry": 0.0,
+          "rz": 0.0
+        }
+      },
+      {
+        "id": 2,
+        "name": "",
+        "tcp": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "rx": 0.0,
+          "ry": 0.0,
+          "rz": 0.0
+        }
+      },
+      {
+        "id": 3,
+        "name": "",
+        "tcp": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "rx": 0.0,
+          "ry": 0.0,
+          "rz": 0.0
+        }
+      }
+    ],
+    "dhLayout": "motoman_slurbt_6",
+    "calibrationId": null,
+    "stationFlipRecipes": []
+  },
+  "profileNotesCount": 5,
+  "profileStableNotes": [
+    "RC1G microns \u2192 mm: a1/a2/a3/d4 from row1, d6 from row2 (Motoman S-L-U-R-B-T).",
+    "505 mm floor-to-S height is not in RC1G; Yaskawa BASE is the S/L intersection.",
+    "AR2010 template match: 150/760/200/1082/100 mm from RC1G microns.",
+    "AR2010 template: geometry matches validated DYNAMIC1 / URDF lengths. Still calibrate pulse scales/offsets per cell."
+  ],
+  "profileParams": {
+    "a1": 150.0,
+    "a2": 760.0,
+    "a3": 200.0,
+    "d4": 1082.0,
+    "d6": 100.0,
+    "d1": 0.0,
+    "reach_mm": 2092.0,
+    "pulse_per_degree_s": 1341.3833333333334,
+    "pulse_offset_s": 0.0,
+    "pulse_per_degree_l": 1907.6774193548388,
+    "pulse_offset_l": 0.0,
+    "pulse_per_degree_u": 1592.89375,
+    "pulse_offset_u": 0.0,
+    "pulse_per_degree_r": 1022.865,
+    "pulse_offset_r": 0.0,
+    "pulse_per_degree_b": 980.24,
+    "pulse_offset_b": 0.0,
+    "pulse_per_degree_t": 454.756043956044,
+    "pulse_offset_t": 0.0
+  }
+}

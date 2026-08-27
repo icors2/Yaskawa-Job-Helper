@@ -1,0 +1,242 @@
+{
+  "generatedBy": "kinematics/golden/generate.py",
+  "closedForm": {
+    "lx": 1245.3,
+    "ly": 2.0,
+    "lz": -1.0,
+    "input": {
+      "x": 100.0,
+      "y": 40.0,
+      "z": 70.0,
+      "rx": 180.0,
+      "ry": 10.0,
+      "rz": 5.0
+    },
+    "output": {
+      "x": 1145.3,
+      "y": 42.0,
+      "z": 69.0,
+      "rx": -180.0,
+      "ry": 10.0,
+      "rz": 175.0
+    },
+    "recipe": {
+      "mirrorAxis": "X",
+      "offset": [
+        1245.3,
+        2.0,
+        -1.0
+      ],
+      "mirrorMatrix": [
+        [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "toolCorrection": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "positionRmsMm": 0.0,
+      "orientationRmsDeg": 0.0,
+      "inliers": 0,
+      "total": 0,
+      "detR": -1.0,
+      "sourceFrameId": null,
+      "targetFrameId": null,
+      "sourceJobName": "",
+      "targetJobName": "",
+      "jobFamily": ""
+    }
+  },
+  "umeyama": {
+    "source": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        100.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        50.0,
+        0.0
+      ],
+      [
+        10.0,
+        10.0,
+        20.0
+      ]
+    ],
+    "target": [
+      [
+        1200.0,
+        0.0,
+        0.0
+      ],
+      [
+        1100.0,
+        0.0,
+        0.0
+      ],
+      [
+        1200.0,
+        50.0,
+        0.0
+      ],
+      [
+        1190.0,
+        10.0,
+        20.0
+      ]
+    ],
+    "rotation": [
+      [
+        -1.0000000000000002,
+        1.981939922201578e-16,
+        -7.445452919120205e-20
+      ],
+      [
+        2.5033314413513405e-17,
+        1.0000000000000002,
+        6.94314237065931e-17
+      ],
+      [
+        -1.602709190821005e-19,
+        -4.1121427859375944e-17,
+        0.9999999999999998
+      ]
+    ],
+    "translation": [
+      1200.0,
+      -3.552713678800501e-15,
+      1.7763568394002505e-15
+    ],
+    "detR": -1.0000000000000002
+  },
+  "syntheticFit": {
+    "accepted": true,
+    "message": "Station mirror about X: L=(1245.3, 2.0, -1.0) mm, pos RMS 0.00 mm, orient RMS 0.00 deg, 10/12 inliers.",
+    "recipe": {
+      "mirrorAxis": "X",
+      "offset": [
+        1245.2999999999997,
+        1.999999999999952,
+        -1.0000000000000142
+      ],
+      "mirrorMatrix": [
+        [
+          -0.9999999999999997,
+          -1.6667125027343603e-16,
+          3.8621155277183974e-17
+        ],
+        [
+          -1.4765042882214238e-16,
+          0.9999999999999997,
+          6.236630392741381e-16
+        ],
+        [
+          -7.092567042123833e-17,
+          -2.0947346114064065e-16,
+          1.0000000000000002
+        ]
+      ],
+      "toolCorrection": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "positionRmsMm": 2.2851901506901054e-13,
+      "orientationRmsDeg": 1.1454575462498536e-06,
+      "inliers": 10,
+      "total": 12,
+      "detR": -0.9999999999999996,
+      "sourceFrameId": null,
+      "targetFrameId": null,
+      "sourceJobName": "",
+      "targetJobName": "",
+      "jobFamily": ""
+    },
+    "positionRmsMm": 2.2851901506901054e-13,
+    "orientationRmsDeg": 1.1454575462498536e-06,
+    "inliers": 10,
+    "total": 12,
+    "detR": -0.9999999999999996,
+    "inlierIndices": [
+      0,
+      1,
+      2,
+      4,
+      5,
+      6,
+      8,
+      9,
+      10,
+      11
+    ]
+  },
+  "identityRejected": {
+    "accepted": false,
+    "message": "Fit is a proper rotation (det(R)=+1.000), not a reflection. This pair looks like a Transfer or same-UF artifact, not a station mirror.",
+    "recipe": null,
+    "positionRmsMm": 2.114398977212523e-14,
+    "orientationRmsDeg": 0.0,
+    "inliers": 12,
+    "total": 12,
+    "detR": 0.9999999999999992,
+    "inlierIndices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ]
+  }
+}

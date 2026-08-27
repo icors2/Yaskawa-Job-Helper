@@ -15,19 +15,21 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 2. **Open listed files only when editing that area** (table below). Prefer 1–3 files over repo-wide search.
 3. **Grep only to** (a) verify a claim here after parallel edits, or (b) find call sites *after* reading the map.
 4. **Skip** dumping whole files into context; use section anchors + exports.
-5. **Parallel work risk:** another agent may touch `features/transform`, `features/wizard`, `lib/jbi/edit.ts` (speeds), `stop.bat`. If behavior disagrees with this doc → **verify if PR in flight**; re-read those paths before changing them.
+5. **Parallel work risk:** another agent may touch `apps/desktop/src/features/transform`, `apps/desktop/src/features/wizard`, `packages/core/src/jbi/edit.ts` (speeds), `stop.bat`. If behavior disagrees with this doc → **verify if PR in flight**; re-read those paths before changing them.
 
 | Task | Open first |
 | --- | --- |
-| Nav / chrome / gates | `src/App.tsx`, `src/components/Sidebar.tsx`, `src/lib/setup/progress.ts` |
-| Parse / serialize | `src/lib/jbi/parse.ts`, `serialize.ts`, `model.ts` |
-| Speeds / weld / line edits | `src/lib/jbi/edit.ts`, `cnd.ts` |
-| Frame move / transform | `src/lib/jbi/frameTransform.ts`, `src/features/transform/index.tsx`, `kinematics/transform.py`, `kinematics/frame_flip.py` |
-| Calibration / write gate | `src/features/calibration/storage.ts`, `wizard.tsx`, `lib/calibration/*`, `kinematics/calibrate.py` |
-| Profiles / folders | `src/lib/robot/profile.ts`, `folders.ts` |
-| Kin protocol | `src/lib/kin/client.ts` ↔ `kinematics/server.py` |
-| FS / USB / sidecar spawn | `src-tauri/src/fs_commands.rs`, `media.rs`, `sidecar.rs`, `src/lib/fs/desktop.ts` |
-| YMConnect | `src/lib/kin/ymconnect.ts`, `src-tauri/src/ymconnect.rs`, `ymconnect/` |
+| Nav / chrome / gates | `apps/desktop/src/App.tsx`, `apps/desktop/src/components/Sidebar.tsx`, `packages/core/src/setup/progress.ts` |
+| Parse / serialize | `packages/core/src/jbi/parse.ts`, `serialize.ts`, `model.ts` |
+| Speeds / weld / line edits | `packages/core/src/jbi/edit.ts`, `cnd.ts` |
+| Frame move / transform | `apps/desktop/src/lib/jbi/frameTransform.ts`, `apps/desktop/src/features/transform/index.tsx`, `kinematics/transform.py`, `kinematics/frame_flip.py` |
+| Calibration / write gate | `apps/desktop/src/features/calibration/storage.ts`, `wizard.tsx`, `packages/core/src/calibration/*`, `kinematics/calibrate.py` |
+| Profiles / folders | `packages/core/src/robot/profile.ts`, `folders.ts` |
+| Kin protocol | `packages/core/src/kin/protocol.ts` (types) + `apps/desktop/src/lib/kin/client.ts` (transport) ↔ `kinematics/server.py` |
+| FK / pose math in TS | `packages/core/src/kin/{pose,fk}.ts`, golden tests in `packages/core/tests/` |
+| CND / RC.PRM / backup parse in TS | `packages/core/src/kin/{cnd,backup}.ts` |
+| FS / USB / sidecar spawn | `apps/desktop/src-tauri/src/fs_commands.rs`, `media.rs`, `sidecar.rs`, `apps/desktop/src/lib/fs/desktop.ts` |
+| YMConnect | `apps/desktop/src/lib/kin/ymconnect.ts`, `apps/desktop/src-tauri/src/ymconnect.rs`, `ymconnect/` |
 
 ---
 
@@ -42,7 +44,7 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 | **Workspace** | `C:\Users\icors\Documents\Yaskawa Job editing\` |
 | **Backup corpus** | `../Yaskawa Jobs/DYNAMIC1` (~300 `.JBI` + CND/PRM) — local only, gitignored |
 | **Manuals** | `../Manuals/` — local only, gitignored |
-| **Flip assist source** | `../Assets/Flip assist.png` → bundled as `src/assets/flip-assist.png` (dual-station). Single-side: `Flip assist left.png` / `Flip assist right.png` → `flip-assist-left.png` / `flip-assist-right.png` |
+| **Flip assist source** | `../Assets/Flip assist.png` → bundled as `apps/desktop/src/assets/flip-assist.png` (dual-station). Single-side: `Flip assist left.png` / `Flip assist right.png` → `flip-assist-left.png` / `flip-assist-right.png` |
 | **Transform fixtures** | `fixtures/transform/` (+ `kinematics/testdata/transform/`) — synthetic USER cartesian before/after for transfer / Flip UF convert / YZ / single-side / **offset +100 X** |
 | **Parent launchers** | `../Start Yaskawa Job Editor.bat`, `../Stop Yaskawa Job Editor.bat` |
 
@@ -53,7 +55,7 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 | Start | `start.bat` → `npm run dev` (Tauri+Vite); PID in `.dev.pids`; optional `--install` |
 | Portable USB | Same folder `portable/YaskawaJobEditor/` for both OSes. Windows: `Build-Portable-USB.bat` → `Run.bat` / `.exe`. Ubuntu: `./Build-Portable-USB.sh` → open `Yaskawa Job Editor.sh`. Sidecar prefers `yaskawa-kin.exe` or `yaskawa-kin` beside the app. |
 | Stop | `stop.bat` → kill tree from `.dev.pids`, then path-matched node/vite/tauri/cargo |
-| Dev port | **1420** (`vite.config.ts` `strictPort`); HMR 1421 if `TAURI_DEV_HOST` |
+| Dev port | **1420** (`apps/desktop/vite.config.ts` `strictPort`); HMR 1421 if `TAURI_DEV_HOST` |
 | Vite-only | `npm run dev:vite` (no FS/sidecar) |
 | Kin alone | `npm run kin` → `python kinematics/server.py` |
 | Roundtrip | `npm run test:roundtrip` — fixtures + DYNAMIC1 ≈ **305** byte-identical (needs local backup) |
@@ -61,9 +63,65 @@ Parent workspace may also contain `Yaskawa Jobs/` (full controller backup — **
 | Kin unit | `npm run test:kin` |
 | Transform fixtures | `npm run test:transform` |
 | S1→S2 regression | `npm run test:regression` |
-| Types | `npx tsc --noEmit` |
+| Core golden tests | `npm run test:core` (vitest in `packages/core`) |
+| Kin golden fixtures | `npm run kin:golden` — regenerates `packages/core/tests/fixtures/*.golden.json` from the Python oracle |
+| Types | `npx tsc -p apps/desktop/tsconfig.json` and `npx tsc -p packages/core/tsconfig.json` |
 
 Quick: `npm install` → `pip install -r kinematics\requirements.txt` → tests → `start.bat`.
+
+---
+
+## Workspace layout (npm workspaces)
+
+The repo is a workspace root; **all scripts still run from the repo root** and delegate with `-w`.
+
+```
+yaskawa-job-editor/            workspace root (package.json "workspaces": packages/*, apps/*)
+├─ packages/core/              @yaskawa/core — no Tauri, no fs, no network
+│  ├─ src/{jbi,calibration,robot,setup,fs,kin}/
+│  └─ tests/                   vitest golden tests + fixtures/*.golden.json
+├─ apps/desktop/               @yaskawa/desktop — Tauri shell (React UI, src-tauri/, vite.config.ts)
+│  └─ src/lib/{kin,fs,jbi}/    platform-coupled tails only (invoke, frameTransform)
+├─ apps/web/                   @yaskawa/web — workspace slot only: package.json, no source yet.
+│                             The web-shell agent adds index.html, src/, vite.config.ts (with the
+│                             core alias below), tsconfig.json, and the build/dev scripts.
+├─ kinematics/                 Python sidecar + oracle (unchanged, still at root)
+├─ fixtures/  scripts/  docs/  unchanged, still at root
+```
+
+**Importing core:** `@yaskawa/core/<area>/<module>` deep imports are the primary form —
+e.g. `@yaskawa/core/jbi/parse`, `@yaskawa/core/kin/fk`, `@yaskawa/core/robot/profile`.
+The root barrel `@yaskawa/core` re-exports namespaces (`jbi`, `kin`, `calibration`, `robot`,
+`paths`, `setup`). Core is consumed as **TypeScript source** — there is no build step.
+Resolution comes from `tsconfig.base.json` `paths` plus a matching alias in
+`apps/desktop/vite.config.ts`; any new app must declare both.
+
+**Core boundary rule:** if a module needs `invoke`, the filesystem, or the network, the
+platform half belongs in the app and only the pure half in core. `kin/client.ts` and
+`robot/profile.ts` are already split this way — protocol types and pure logic in core, the
+sidecar/backup-scan calls in `apps/desktop`.
+
+**Known boundary debt (ports/adapters agent owns this):** the preference/session stores
+(`robot/{profile,folders,pulseMirrorPrefs,ymconnectPrefs,motoros2Prefs}`, `setup/progress`,
+`calibration/session`) still call a global `localStorage` directly. That is fine in both
+browser-backed shells and is not hit by the golden tests, but it is the remaining
+platform assumption inside core and wants a storage port.
+
+### Golden tests for the TS kinematics port
+
+Python stays the oracle. `kinematics/golden/generate.py` (run via `npm run kin:golden`) imports
+`ar2010.py` / `cnd.py` / `robot_profile.py`, evaluates a fixed case list, and writes
+`packages/core/tests/fixtures/{pose,fk,cnd,backup}.golden.json`. The vitest suites in
+`packages/core/tests/` re-run the same cases through the TypeScript port and compare at
+`TOLERANCE = 1e-6` (mm / deg) via the helpers in `tests/golden.ts`.
+
+Rules if you extend a ported module:
+
+- Add the case to `generate.py`, regenerate, and commit the JSON. Never hand-edit a `.golden.json`.
+- Fixtures must stay small and deterministic — no absolute paths, timestamps, or full backups.
+  `fixtures/RC.PRM` is the extracted `///RC1G` section only (see `kinematics/golden/extract_rcprm_fixture.py`),
+  not the controller file.
+- `../Yaskawa Jobs/DYNAMIC1` is the oracle input but is **never** committed.
 
 ---
 
@@ -110,56 +168,63 @@ flowchart LR
 
 | Path | Purpose |
 | --- | --- |
-| `src/App.tsx` | ProfileGate, forced setup, folder restore, page router, shared `activeJobPath` |
-| `src/main.tsx` | React mount |
-| `src/index.css` | Motoman theme tokens + Tailwind `@theme` / component classes |
-| `src/components/Sidebar.tsx` | Nav labels (Setup **not** listed) |
-| `src/components/StatusBar.tsx` | Status, sidecar ping, setup/calib shortcuts |
-| `src/features/startup/ProfileGate.tsx` | Blocking robot select/create each session |
-| `src/features/setup/` | Forced Setup Guide + YMConnect + MotoROS2 panels |
-| `src/features/wizard/` | Job Editing Wizard (intent → diff → write) |
-| `src/features/library/` | Loaded Jobs + dbl-click → Wizard/Manual modal |
-| `src/features/editor/` | Manual Editor |
-| `src/features/calibration/` | Manual fit UI + Guided wizard + upload/extract + gate storage |
-| `src/features/transform/` | Transfer / **Frame convert (Flip)** / Mirror / **Single-side mirror** / Offset + flip assist; **Preview → Write to output folder** (`writeOutputFile`, edit-write gate) |
-| `src/features/diff/` | Unified diff, dry-run, write, USB export hook |
-| `src/features/export/UsbExportPanel.tsx` | Removable drive export from output |
-| `src/assets/flip-assist.png` | Dual-station Flip assist diagram |
-| `src/assets/flip-assist-left.png` / `flip-assist-right.png` | Single-station demos (XYZ origin anchors) |
+| `apps/desktop/src/App.tsx` | ProfileGate, forced setup, folder restore, page router, shared `activeJobPath` |
+| `apps/desktop/src/main.tsx` | React mount |
+| `apps/desktop/src/index.css` | Motoman theme tokens + Tailwind `@theme` / component classes |
+| `apps/desktop/src/components/Sidebar.tsx` | Nav labels (Setup **not** listed) |
+| `apps/desktop/src/components/StatusBar.tsx` | Status, sidecar ping, setup/calib shortcuts |
+| `apps/desktop/src/features/startup/ProfileGate.tsx` | Blocking robot select/create each session |
+| `apps/desktop/src/features/setup/` | Forced Setup Guide + YMConnect + MotoROS2 panels |
+| `apps/desktop/src/features/wizard/` | Job Editing Wizard (intent → diff → write) |
+| `apps/desktop/src/features/library/` | Loaded Jobs + dbl-click → Wizard/Manual modal |
+| `apps/desktop/src/features/editor/` | Manual Editor |
+| `apps/desktop/src/features/calibration/` | Manual fit UI + Guided wizard + upload/extract + gate storage |
+| `apps/desktop/src/features/transform/` | Transfer / **Frame convert (Flip)** / Mirror / **Single-side mirror** / Offset + flip assist; **Preview → Write to output folder** (`writeOutputFile`, edit-write gate) |
+| `apps/desktop/src/features/diff/` | Unified diff, dry-run, write, USB export hook |
+| `apps/desktop/src/features/export/UsbExportPanel.tsx` | Removable drive export from output |
+| `apps/desktop/src/assets/flip-assist.png` | Dual-station Flip assist diagram |
+| `apps/desktop/src/assets/flip-assist-left.png` / `flip-assist-right.png` | Single-station demos (XYZ origin anchors) |
 
 ### TS libs
 
 | Path | Purpose |
 | --- | --- |
-| `src/lib/jbi/model.ts` | `JobFile`, pos kinds, CRLF contract |
-| `src/lib/jbi/parse.ts` | Lossless parse; NPOS validate |
-| `src/lib/jbi/serialize.ts` | Byte-identical emit; optional NPOS recompute |
-| `src/lib/jbi/library.ts` | Index, CALL/PSTART, rename/refs |
-| `src/lib/jbi/edit.ts` | Insert/delete/reorder; V=/VJ=; weld tokens |
-| `src/lib/jbi/cnd.ts` | ARCSRT/ARCEND/WEAV inventory validate |
-| `src/lib/jbi/diff.ts` | Unified diff + validation report |
-| `src/lib/jbi/frameTransform.ts` | PULSE→USER frame-move; USER cartesian transfer; **Flip UF convert**; mirror / single-side (same UF); offset; optional pulse-axis flips |
-| `src/lib/robot/profile.ts` | Multi-profile store, install gate, CAL_* names |
-| `src/lib/robot/pulseMirrorPrefs.ts` | Per-profile advanced S/L/U/R/B/T sign knobs (default identity) |
-| `src/lib/robot/folders.ts` | Per-profile source/output; `YaskawaJobEditor_Output` |
-| `src/lib/robot/ymconnectPrefs.ts` | Per-profile YMConnect host/group |
-| `src/lib/robot/motoros2Prefs.ts` | Optional MotoROS2 prefs (setup only) |
-| `src/lib/setup/progress.ts` | Setup v3 progress / force / finish |
-| `src/lib/calibration/*` | STANDARD/RELATIVE generators, home→±limit steps, session |
-| `src/lib/kin/client.ts` | **Kin protocol SoT** (v1.0.0) |
-| `src/lib/kin/ymconnect.ts` | ConvertPosition client (separate from kin) |
-| `src/lib/fs/desktop.ts` | Tauri FS invokes |
-| `src/lib/fs/paths.ts` | Path join helpers |
+| `packages/core/src/jbi/model.ts` | `JobFile`, pos kinds, CRLF contract |
+| `packages/core/src/jbi/parse.ts` | Lossless parse; NPOS validate |
+| `packages/core/src/jbi/serialize.ts` | Byte-identical emit; optional NPOS recompute |
+| `packages/core/src/jbi/library.ts` | Index, CALL/PSTART, rename/refs |
+| `packages/core/src/jbi/edit.ts` | Insert/delete/reorder; V=/VJ=; weld tokens |
+| `packages/core/src/jbi/cnd.ts` | ARCSRT/ARCEND/WEAV inventory validate |
+| `packages/core/src/jbi/diff.ts` | Unified diff + validation report |
+| `apps/desktop/src/lib/jbi/frameTransform.ts` | PULSE→USER frame-move; USER cartesian transfer; **Flip UF convert**; mirror / single-side (same UF); offset; optional pulse-axis flips |
+| `packages/core/src/robot/profile.ts` | Multi-profile store, install gate, CAL_* names |
+| `packages/core/src/robot/pulseMirrorPrefs.ts` | Per-profile advanced S/L/U/R/B/T sign knobs (default identity) |
+| `packages/core/src/robot/folders.ts` | Per-profile source/output; `YaskawaJobEditor_Output` |
+| `packages/core/src/robot/ymconnectPrefs.ts` | Per-profile YMConnect host/group |
+| `packages/core/src/robot/motoros2Prefs.ts` | Optional MotoROS2 prefs (setup only) |
+| `packages/core/src/setup/progress.ts` | Setup v3 progress / force / finish |
+| `packages/core/src/calibration/*` | STANDARD/RELATIVE generators, home→±limit steps, session |
+| `packages/core/src/kin/types.ts` | Shared kin domain types (`CartesianPose`, `RobotProfile`, `UserFrame`, `ToolRecord`) |
+| `packages/core/src/kin/protocol.ts` | **Kin protocol SoT** — wire request/response shapes, `KIN_PROTOCOL_VERSION` |
+| `packages/core/src/kin/pose.ts` | Rotation/matrix math: Yaskawa ZYX ↔ matrix, compose/invert, geodesic deg (port of `ar2010.py`) |
+| `packages/core/src/kin/fk.ts` | AR2010 link params, pulse→deg, `forwardKinematics` / `fkPulse` (port of `ar2010.py`) |
+| `packages/core/src/kin/cnd.ts` | `UFRAME.CND` / `TOOL.CND` / `RC.PRM` parsers (port of `cnd.py`) |
+| `packages/core/src/kin/backup.ts` | `SYSTEM.SYS` identity, backup scan, profile-from-backup (port of `robot_profile.py`) |
+| `apps/desktop/src/lib/kin/client.ts` | Tauri transport for the kin protocol; re-exports the core types |
+| `apps/desktop/src/lib/kin/ymconnect.ts` | ConvertPosition client (separate from kin) |
+| `apps/desktop/src/lib/fs/desktop.ts` | Tauri FS invokes |
+| `apps/desktop/src/lib/robot/profile.ts` | Sidecar profile sync + backup scan/create (Tauri half of `robot/profile`) |
+| `packages/core/src/fs/paths.ts` | Path join helpers |
 
 ### Rust / Python / other
 
 | Path | Purpose |
 | --- | --- |
-| `src-tauri/src/lib.rs` | Command registration |
-| `src-tauri/src/fs_commands.rs` | Folders, list/read JBI, output-scoped write |
-| `src-tauri/src/media.rs` | Removable drives, USB export, `ensure_directory` |
-| `src-tauri/src/sidecar.rs` | Spawn + `kin_request` stdio |
-| `src-tauri/src/ymconnect.rs` | Bridge status + ConvertPosition |
+| `apps/desktop/src-tauri/src/lib.rs` | Command registration |
+| `apps/desktop/src-tauri/src/fs_commands.rs` | Folders, list/read JBI, output-scoped write |
+| `apps/desktop/src-tauri/src/media.rs` | Removable drives, USB export, `ensure_directory` |
+| `apps/desktop/src-tauri/src/sidecar.rs` | Spawn + `kin_request` stdio |
+| `apps/desktop/src-tauri/src/ymconnect.rs` | Bridge status + ConvertPosition |
 | `kinematics/server.py` | Stdio JSON dispatcher |
 | `kinematics/ar2010.py` | S-L-U-R-B-T FK template |
 | `kinematics/robot_model.py` | Profile → DH params |
@@ -235,12 +300,12 @@ Weld path: indices strictly between `ARCON`…`ARCOF` (nested depth) for weld-sp
 
 | Piece | Path |
 | --- | --- |
-| Step defs (home, UF, S+/S−…) | `src/lib/calibration/steps.ts` |
-| JBI + README generators | `src/lib/calibration/jobGenerator.ts` |
-| Upload / extract from taught JBIs | `src/lib/calibration/extract.ts`, `features/calibration/UploadCalJobs.tsx` |
-| Wizard UI | `src/features/calibration/wizard.tsx` |
+| Step defs (home, UF, S+/S−…) | `packages/core/src/calibration/steps.ts` |
+| JBI + README generators | `packages/core/src/calibration/jobGenerator.ts` |
+| Upload / extract from taught JBIs | `packages/core/src/calibration/extract.ts`, `apps/desktop/src/features/calibration/UploadCalJobs.tsx` |
+| Wizard UI | `apps/desktop/src/features/calibration/wizard.tsx` |
 | Fit / residuals | `kinematics/calibrate.py` |
-| Gate storage | `src/features/calibration/storage.ts` |
+| Gate storage | `apps/desktop/src/features/calibration/storage.ts` |
 | Mini extract fixtures | `fixtures/calibration/CAL_MINI_*.JBI` + `npm run test:calib-extract` |
 
 ---
@@ -289,9 +354,9 @@ Disk mirror: `<output>/profiles/robot_profiles.json` (`ROBOT_PROFILES_FILENAME`)
 
 ## Sidecar JSON protocol
 
-**SoT:** [`src/lib/kin/client.ts`](src/lib/kin/client.ts) — `KIN_PROTOCOL_VERSION = "1.0.0"`. Keep in sync with `kinematics/server.py`.
+**SoT:** [`packages/core/src/kin/protocol.ts`](packages/core/src/kin/protocol.ts) — `KIN_PROTOCOL_VERSION = "1.0.0"`. Keep in sync with `kinematics/server.py`.
 
-**Transport:** one camelCase JSON object per stdin line → one response line. Tauri `kin_request`.
+**Transport:** one camelCase JSON object per stdin line → one response line. Tauri `kin_request` in [`apps/desktop/src/lib/kin/client.ts`](apps/desktop/src/lib/kin/client.ts), which re-exports the core protocol types so existing call sites keep importing from one place.
 
 | Method | Role |
 | --- | --- |
@@ -309,7 +374,7 @@ Disk mirror: `<output>/profiles/robot_profiles.json` (`ROBOT_PROFILES_FILENAME`)
 
 **Units:** pose `x,y,z` mm; `rx,ry,rz` deg. Pulses length-6 **S,L,U,R,B,T**.
 
-YMConnect is **not** this protocol — `ymconnect_convert_position` / `src/lib/kin/ymconnect.ts`.
+YMConnect is **not** this protocol — `ymconnect_convert_position` / `apps/desktop/src/lib/kin/ymconnect.ts`.
 
 ---
 
@@ -341,16 +406,16 @@ Wizard mirror/offset intents navigate to Transform (geometry lives there).
 | Add sidebar page | `AppPage` + `Sidebar` + `App.tsx` render |
 | Forced setup steps | `lib/setup/progress.ts` `SETUP_STEP_ORDER` / `MINIMUM_SETUP_STEPS` + `features/setup` |
 | Add transform mode | `features/transform` mode union + UI; kin method if new math; maybe wizard intent |
-| Calibration steps / CAL jobs | `lib/calibration/steps.ts`, `jobGenerator.ts`, `extract.ts`, `features/calibration/wizard.tsx`, `UploadCalJobs.tsx` |
-| Gate threshold / logic | `features/calibration/storage.ts` |
+| Calibration steps / CAL jobs | `packages/core/src/calibration/steps.ts`, `jobGenerator.ts`, `extract.ts`, `apps/desktop/src/features/calibration/wizard.tsx`, `UploadCalJobs.tsx` |
+| Gate threshold / logic | `apps/desktop/src/features/calibration/storage.ts` |
 | Fix serializer / roundtrip | `parse.ts` / `serialize.ts` — then `test:roundtrip` |
 | Speed / weld rules | `lib/jbi/edit.ts` (+ `test:edit`) |
 | Frame-move / offset emission | `lib/jbi/frameTransform.ts` + `kinematics/transform.py` |
-| Add Tauri command | `src-tauri/src/*.rs` + `lib.rs` handler + `lib/fs` or kin wrapper |
+| Add Tauri command | `apps/desktop/src-tauri/src/*.rs` + `lib.rs` handler + `lib/fs` or kin wrapper |
 | Change FK / DH | `kinematics/ar2010.py`, `robot_model.py` — `test:kin` |
 | Profile required files | `lib/robot/profile.ts` `PROFILE_REQUIRED_FILES` + `robot_profile.py` |
-| Theme tokens | `src/index.css` (`--app-*`, `@theme`) |
-| Dev port | `vite.config.ts` |
+| Theme tokens | `apps/desktop/src/index.css` (`--app-*`, `@theme`) |
+| Dev port | `apps/desktop/vite.config.ts` |
 | Stop behavior | `stop.bat` (**verify if PR in flight**) |
 
 ---
@@ -423,7 +488,7 @@ After changes, run the smallest sufficient set:
 - Nav: `Sidebar.tsx`
 - Keys: `profile.ts`, `folders.ts`, `progress.ts`, `calibration/storage.ts`, `App.tsx` session key
 - Transform modes: `features/transform/index.tsx`
-- Calibration steps: `lib/calibration/steps.ts` (home + S+/S− …)
+- Calibration steps: `packages/core/src/calibration/steps.ts` (home + S+/S− …)
 - Protocol methods: `lib/kin/client.ts` ↔ `server.py` header
 - Launchers: `start.bat`, `stop.bat`, portable `Run.bat` / `Yaskawa Job Editor.sh`
 - Gates: `getCalibrationGate`, `shouldForceSetup`, `isProfileSetupFinished`

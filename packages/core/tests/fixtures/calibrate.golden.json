@@ -1,0 +1,78 @@
+{
+  "generatedBy": "kinematics/golden/generate.py",
+  "pairLabels": [
+    "home",
+    "REAMER-RORG",
+    "S1-RORG",
+    "S2-RORG"
+  ],
+  "seedParams": {
+    "a1": 150.0,
+    "a2": 760.0,
+    "a3": 200.0,
+    "d4": 1082.0,
+    "d6": 100.0,
+    "d1": 0.0,
+    "reach_mm": 2010.0,
+    "pulse_per_degree_s": 1341.3833333333334,
+    "pulse_offset_s": 0.0,
+    "pulse_per_degree_l": 1907.6774193548388,
+    "pulse_offset_l": 0.0,
+    "pulse_per_degree_u": 1592.89375,
+    "pulse_offset_u": 0.0,
+    "pulse_per_degree_r": 1022.865,
+    "pulse_offset_r": 0.0,
+    "pulse_per_degree_b": 980.24,
+    "pulse_offset_b": 0.0,
+    "pulse_per_degree_t": 454.756043956044,
+    "pulse_offset_t": 0.0
+  },
+  "result": {
+    "parameters": {
+      "a1": 150.0,
+      "a2": 760.0,
+      "a3": 200.0,
+      "d4": 1082.0,
+      "d6": 100.0,
+      "d1": 0.0,
+      "reach_mm": 2010.0,
+      "pulse_per_degree_s": 1341.502665699188,
+      "pulse_offset_s": 66.34455605943073,
+      "pulse_per_degree_l": 1903.1224431247788,
+      "pulse_offset_l": -176.12220846638962,
+      "pulse_per_degree_u": 1592.5298381099205,
+      "pulse_offset_u": 0.749781062074239,
+      "pulse_per_degree_r": 1024.4806675407356,
+      "pulse_offset_r": 148.9141047570578,
+      "pulse_per_degree_b": 979.9410730975061,
+      "pulse_offset_b": -42.10012448890172,
+      "pulse_per_degree_t": 456.9094176774525,
+      "pulse_offset_t": -38.16505145299463
+    },
+    "residuals": {
+      "rmsMm": 0.11372515179630975,
+      "worstMm": 0.1652362915147503,
+      "perPair": [
+        {
+          "xyzMm": 0.1652362915147503,
+          "rotDeg": 0.11388566472792265
+        },
+        {
+          "xyzMm": 0.027626732773355915,
+          "rotDeg": 179.67654238504483
+        },
+        {
+          "xyzMm": 0.0909514238255229,
+          "rotDeg": 178.33087482178115
+        },
+        {
+          "xyzMm": 0.12407743836494582,
+          "rotDeg": 179.71037752077436
+        }
+      ]
+    },
+    "success": true
+  },
+  "isCalibratedAt1mm": true,
+  "isCalibratedAt5mm": true
+}

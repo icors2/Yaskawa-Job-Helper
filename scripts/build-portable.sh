@@ -25,7 +25,7 @@ for arg in "$@"; do
 done
 
 OUT_DIR="$ROOT/portable/YaskawaJobEditor"
-RELEASE_DIR="$ROOT/src-tauri/target/release"
+RELEASE_DIR="$ROOT/apps/desktop/src-tauri/target/release"
 KIN_DIST="$ROOT/dist-kin"
 KIN_DIR="$ROOT/kinematics"
 PORTABLE_SRC="$ROOT/scripts/portable"
@@ -98,7 +98,7 @@ fi
 
 if [[ "$SKIP_TAURI" -eq 0 ]]; then
   echo "[3/4] Tauri release binary (no installer bundle)..."
-  if ! npx tauri build --no-bundle; then
+  if ! npm run tauri -w @yaskawa/desktop -- build --no-bundle; then
     echo "tauri build --no-bundle failed; trying full tauri build..."
     npm run build
   fi
@@ -154,7 +154,7 @@ cp -f "$PORTABLE_SRC/README-PORTABLE.txt" "$OUT_DIR/README-PORTABLE.txt"
 
 APPIMAGE=""
 shopt -s nullglob
-for img in "$ROOT/src-tauri/target/release/bundle/appimage/"*.AppImage; do
+for img in "$RELEASE_DIR/bundle/appimage/"*.AppImage; do
   APPIMAGE="$img"
 done
 shopt -u nullglob
