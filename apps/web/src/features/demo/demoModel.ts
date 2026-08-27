@@ -180,7 +180,9 @@ export const buildDemoModel = (args: {
 
   const toVizPose = (ufPose: CartesianPose, station: "source" | "flipped"): CartesianPose => {
     if (args.layout === "sideBySide") {
-      return ufPose
+      // Keep UF-local axes, but separate S1/S2 decks along local Y so both paths read clearly.
+      const deckY = station === "source" ? -420 : 420
+      return { ...ufPose, y: ufPose.y + deckY }
     }
     const frame = station === "source" ? sourceFrame.buser : targetFrame.buser
     return composePoses(frame, ufPose)

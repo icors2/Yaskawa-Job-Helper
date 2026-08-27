@@ -1,7 +1,7 @@
 /**
  * Bundled DYNAMIC1-derived sample for cold-start flip demo.
- * BUSER poses match fixtures/UFRAME.CND UF2/UF3; pulses are the first
- * 10 C-rows of R1_A301-STEP1_S1 (not the full job).
+ * BUSER / RORG match Yaskawa Jobs/DYNAMIC1/UFRAME.CND UF2/UF3 (Cell Render cell).
+ * Pulses are the first 10 C-rows of an A301 S1 job (not the full job).
  */
 
 export const DEMO_SOURCE_FRAME_ID = 2

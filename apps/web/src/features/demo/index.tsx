@@ -20,8 +20,8 @@ export const DemoPage = () => {
   const active = getActiveProfile(profilesStore)
 
   const [layout, setLayout] = useState<DemoLayoutMode>("overlay")
-  const [showTriads, setShowTriads] = useState(true)
-  const [showMirrorPlane, setShowMirrorPlane] = useState(true)
+  const [showTriads, setShowTriads] = useState(false)
+  const [showMirrorPlane, setShowMirrorPlane] = useState(false)
   const [scrubIndex, setScrubIndex] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [status, setStatus] = useState("Loading demo…")
