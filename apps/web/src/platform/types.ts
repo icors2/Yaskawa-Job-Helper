@@ -43,10 +43,18 @@ export interface PlatformApi {
   folders: () => LinkedFolders
   reconnectSource: () => Promise<boolean>
   reconnectOutput: () => Promise<boolean>
-  /** List bare filenames under the linked source (for backup scan). */
+  /**
+   * List file paths relative to the linked source (any depth). Used by backup
+   * scan — must include controller files such as SYSTEM.SYS, not only `.JBI`.
+   */
   listSourceEntries: () => Promise<string[]>
-  /** Read a required backup file by basename from the source link. */
+  /** Read a required backup file by basename (case-insensitive, recursive). */
   readSourceFile: (basename: string) => Promise<string>
+  /**
+   * When the directory API hides a controller file (notably `.SYS` in Chromium),
+   * prompt via the File API and attach overrides so scan/create can proceed.
+   */
+  ensureControllerFiles?: (names: readonly string[]) => Promise<void>
   /** Mirror profiles JSON into the linked output folder when writable. */
   mirrorProfilesJson: (json: string) => Promise<string | null>
   refreshPermissionState: () => Promise<LinkedFolders>

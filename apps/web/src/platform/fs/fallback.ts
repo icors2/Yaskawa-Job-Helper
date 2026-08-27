@@ -1,3 +1,6 @@
+import {
+  CONTROLLER_FILE_ALIASES
+} from "@yaskawa/core/kin/backup"
 import { ROBOT_PROFILES_FILENAME } from "@yaskawa/core/robot/profile"
 import type { FileSystemPort, JbiEntry, LinkedFolders } from "../types"
 
@@ -43,6 +46,30 @@ const downloadText = (filename: string, contents: string): void => {
   document.body.removeChild(anchor)
   URL.revokeObjectURL(url)
 }
+
+const namesFor = (basename: string): string[] => {
+  const aliases = CONTROLLER_FILE_ALIASES[basename] ?? []
+  return [basename, ...aliases]
+}
+
+const pickSingleFile = (accept: string, label: string): Promise<File | null> =>
+  new Promise((resolve) => {
+    const input = document.createElement("input")
+    input.type = "file"
+    if (accept) {
+      input.accept = accept
+    }
+    input.style.display = "none"
+    input.setAttribute("aria-label", label)
+    const handleChange = () => {
+      input.removeEventListener("change", handleChange)
+      document.body.removeChild(input)
+      resolve(input.files?.item(0) ?? null)
+    }
+    input.addEventListener("change", handleChange)
+    document.body.appendChild(input)
+    input.click()
+  })
 
 export const createFallbackFs = () => {
   let sourceFiles: VirtualFile[] = []
@@ -98,13 +125,23 @@ export const createFallbackFs = () => {
     )
   }
 
+  const findByBasename = (basename: string): VirtualFile | undefined => {
+    const wanted = new Set(namesFor(basename).map((name) => name.toUpperCase()))
+    return (
+      sourceFiles.find((entry) => wanted.has(entry.name.toUpperCase())) ??
+      sourceFiles.find((entry) => {
+        const leaf = entry.relativePath.split("/").pop() ?? entry.name
+        return wanted.has(leaf.toUpperCase())
+      })
+    )
+  }
+
   const fs: FileSystemPort = {
     pickSourceFolder: async () => {
       const list = await pickDirectoryFiles()
       return ingest(list, "source")
     },
     pickOutputFolder: async () => {
-      // Fallback cannot grant a writable directory; mark Downloads as the sink.
       outputChosen = true
       outputLabel = "Downloads"
       return outputLabel
@@ -147,16 +184,41 @@ export const createFallbackFs = () => {
   }
 
   const readSourceFile = async (basename: string): Promise<string> => {
-    const upper = basename.toUpperCase()
-    const hit =
-      sourceFiles.find((entry) => entry.name.toUpperCase() === upper) ??
-      sourceFiles.find((entry) =>
-        entry.relativePath.toUpperCase().endsWith(`/${upper}`)
-      )
+    const hit = findByBasename(basename)
     if (!hit) {
-      throw new Error(`Missing ${basename} in uploaded folder`)
+      throw new Error(
+        `Missing ${basename} in uploaded folder` +
+          (basename.toUpperCase() === "SYSTEM.SYS"
+            ? " (upload may omit .SYS — pick SYSTEM.SYS manually or rename to SYSTEM.SYS.TXT)"
+            : "")
+      )
     }
     return hit.file.text()
+  }
+
+  const ensureControllerFiles = async (names: readonly string[]): Promise<void> => {
+    if (sourceFiles.length === 0) {
+      throw new Error("No source folder uploaded yet.")
+    }
+    for (const name of names) {
+      if (findByBasename(name)) {
+        continue
+      }
+      const accept =
+        name.toUpperCase() === "SYSTEM.SYS" ? ".sys,.SYS,.txt,.TXT,text/plain" : ""
+      const picked = await pickSingleFile(
+        accept,
+        `Select ${name} (folder upload did not include it)`
+      )
+      if (!picked) {
+        continue
+      }
+      sourceFiles.push({
+        relativePath: picked.name,
+        name: picked.name,
+        file: picked
+      })
+    }
   }
 
   const mirrorProfilesJson = async (json: string): Promise<string | null> => {
@@ -176,6 +238,7 @@ export const createFallbackFs = () => {
     reconnectOutput: async () => false,
     listSourceEntries,
     readSourceFile,
+    ensureControllerFiles,
     mirrorProfilesJson,
     refreshPermissionState: async () => folders()
   }

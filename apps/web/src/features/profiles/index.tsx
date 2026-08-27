@@ -85,7 +85,9 @@ export const ProfilesPage = () => {
       setStatus(
         result.ready
           ? `Source linked (${label}) — required controller files found.`
-          : `Source linked (${label}) — missing: ${result.missingRequired.join(", ")}`
+          : `Source linked (${label}) — missing: ${result.missingRequired.join(", ")}. ` +
+              "Pick the folder that contains SYSTEM.SYS (not a parent JOBS folder), " +
+              "or if Chrome hid .SYS, choose SYSTEM.SYS in the follow-up file picker / rename to SYSTEM.SYS.TXT."
       )
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Pick source failed")

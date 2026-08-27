@@ -32,6 +32,15 @@ export const RECOMMENDED_FILES = [
   "WEAV.CND"
 ] as const
 
+/**
+ * Browser File System Access APIs sometimes hide or reject `.SYS` (and a few
+ * other “dangerous” suffixes). Accept common renames so a linked backup still
+ * scans when the user copies `SYSTEM.SYS` → `SYSTEM.SYS.TXT`.
+ */
+export const CONTROLLER_FILE_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "SYSTEM.SYS": ["SYSTEM.SYS.TXT", "SYSTEM.TXT", "SYSTEM_SYS.TXT"]
+}
+
 export const PROFILE_STATUS_TEMPLATE = "template_validated"
 export const PROFILE_STATUS_UNVALIDATED = "unvalidated"
 export const PROFILE_STATUS_CALIBRATED = "calibrated"
@@ -149,25 +158,43 @@ const baseName = (path: string): string => {
   return parts[parts.length - 1] ?? ""
 }
 
-const depthOf = (path: string): number => path.replace(/\\/g, "/").split("/").length - 1
+const depthOf = (path: string): number => {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean)
+  return Math.max(0, parts.length - 1)
+}
+
+const candidateNames = (name: string): string[] => {
+  const aliases = CONTROLLER_FILE_ALIASES[name] ?? []
+  return [name, ...aliases]
+}
 
 /**
  * Locate a controller file in a backup listing of paths relative to the root.
- * Prefers the root, then a case-insensitive root match, then one level down
- * (CF/USB layouts), matching `robot_profile._find_file`.
+ * Case-insensitive, any depth; prefers shallower paths (root, then CF/USB,
+ * then deeper nests). Also accepts `CONTROLLER_FILE_ALIASES` renames.
  */
-const findEntry = (entries: readonly string[], name: string): string | null => {
-  const wanted = name.toLowerCase()
-  const root = entries.filter((entry) => depthOf(entry) === 0)
-  const exact = root.find((entry) => baseName(entry) === name)
-  if (exact) {
-    return exact
+export const findEntry = (
+  entries: readonly string[],
+  name: string
+): string | null => {
+  const wanted = new Set(candidateNames(name).map((item) => item.toLowerCase()))
+  let best: string | null = null
+  let bestDepth = Number.POSITIVE_INFINITY
+  for (const entry of entries) {
+    const leaf = baseName(entry)
+    if (!leaf || !wanted.has(leaf.toLowerCase())) {
+      continue
+    }
+    const depth = depthOf(entry)
+    if (depth < bestDepth) {
+      best = entry
+      bestDepth = depth
+      if (depth === 0) {
+        return best
+      }
+    }
   }
-  const insensitive = root.find((entry) => baseName(entry).toLowerCase() === wanted)
-  if (insensitive) {
-    return insensitive
-  }
-  return entries.find((entry) => depthOf(entry) === 1 && baseName(entry) === name) ?? null
+  return best
 }
 
 /**

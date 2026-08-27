@@ -4,6 +4,7 @@
  */
 
 import {
+  CONTROLLER_FILE_ALIASES,
   createProfileFromBackup,
   scanBackup,
   type BackupSources
@@ -19,16 +20,40 @@ import type { PlatformApi } from "../platform"
 
 const REQUIRED = ["SYSTEM.SYS", "RC.PRM", "TOOL.CND", "UFRAME.CND"] as const
 
+const topLevelSample = (entries: readonly string[], limit = 12): string => {
+  const top = entries
+    .map((entry) => entry.replace(/\\/g, "/"))
+    .filter((entry) => !entry.includes("/"))
+    .slice(0, limit)
+  if (top.length === 0) {
+    return "(no top-level files listed — pick the folder that contains SYSTEM.SYS, or Chrome may be hiding .SYS)"
+  }
+  const more = entries.length > top.length ? ` … +${entries.length - top.length} more` : ""
+  return top.join(", ") + more
+}
+
+const missingScanMessage = (
+  missing: readonly string[],
+  entries: readonly string[]
+): string => {
+  const aliasHint = missing.includes("SYSTEM.SYS")
+    ? " If your browser hides .SYS files, copy SYSTEM.SYS to SYSTEM.SYS.TXT in the backup (or use Upload SYSTEM.SYS)."
+    : ""
+  return (
+    `Missing required files: ${missing.join(", ")}. ` +
+    `Top-level in linked folder: ${topLevelSample(entries)}.${aliasHint}`
+  )
+}
+
 export const scanRobotBackupWeb = async (
   platform: PlatformApi,
   folderLabel: string
 ): Promise<ScanBackupResult> => {
+  if (platform.ensureControllerFiles) {
+    await platform.ensureControllerFiles([...REQUIRED])
+  }
   const entries = await platform.listSourceEntries()
-  const basenames = entries.map((entry) => {
-    const parts = entry.replace(/\\/g, "/").split("/")
-    return parts[parts.length - 1] ?? entry
-  })
-  return scanBackup(folderLabel, basenames)
+  return scanBackup(folderLabel, entries)
 }
 
 export const createRobotProfileFromBackupWeb = async (
@@ -41,7 +66,8 @@ export const createRobotProfileFromBackupWeb = async (
 ): Promise<{ store: RobotProfilesStore; profile: RobotProfile; scan: ScanBackupResult }> => {
   const scan = await scanRobotBackupWeb(platform, options.folderLabel)
   if (!scan.ready) {
-    throw new Error(`Missing required files: ${scan.missingRequired.join(", ")}`)
+    const entries = await platform.listSourceEntries()
+    throw new Error(missingScanMessage(scan.missingRequired, entries))
   }
   const sources: BackupSources = {
     systemSys: await platform.readSourceFile(REQUIRED[0]),
@@ -60,6 +86,8 @@ export const createRobotProfileFromBackupWeb = async (
   )
   return { store, profile, scan }
 }
+
+export const controllerFileAliases = CONTROLLER_FILE_ALIASES
 
 export {
   getActiveProfile,

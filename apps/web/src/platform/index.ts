@@ -73,6 +73,10 @@ export const createPlatform = async (): Promise<PlatformApi> => {
     reconnectOutput: backend.reconnectOutput,
     listSourceEntries: backend.listSourceEntries,
     readSourceFile: backend.readSourceFile,
+    ensureControllerFiles:
+      "ensureControllerFiles" in backend && typeof backend.ensureControllerFiles === "function"
+        ? backend.ensureControllerFiles
+        : undefined,
     mirrorProfilesJson: backend.mirrorProfilesJson,
     refreshPermissionState: backend.refreshPermissionState
   }

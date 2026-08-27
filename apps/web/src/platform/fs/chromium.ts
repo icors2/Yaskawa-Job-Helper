@@ -1,3 +1,7 @@
+import {
+  CONTROLLER_FILE_ALIASES,
+  REQUIRED_FILES
+} from "@yaskawa/core/kin/backup"
 import { ROBOT_PROFILES_FILENAME } from "@yaskawa/core/robot/profile"
 import { idbClearHandle, idbGetHandle, idbSetHandle, type HandleRole } from "../idb"
 import type { FileSystemPort, JbiEntry, LinkedFolders } from "../types"
@@ -80,18 +84,23 @@ const walkJbi = async (
   return entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
 }
 
-const listBasenames = async (dir: FileSystemDirectoryHandle): Promise<string[]> => {
+/** Relative paths of every file under `dir` (directories themselves are omitted). */
+const listRelativeFiles = async (
+  dir: FileSystemDirectoryHandle,
+  prefix = ""
+): Promise<string[]> => {
   const names: string[] = []
   // @ts-expect-error — async iterator
   for await (const [name, handle] of dir.entries()) {
+    const relative = prefix ? `${prefix}/${name}` : name
     if (handle.kind === "file") {
-      names.push(name)
-    } else if (handle.kind === "directory") {
-      const nested = await listBasenames(handle as FileSystemDirectoryHandle)
-      for (const child of nested) {
-        names.push(`${name}/${child}`)
-      }
-      names.push(name)
+      names.push(relative)
+      continue
+    }
+    if (handle.kind === "directory") {
+      names.push(
+        ...(await listRelativeFiles(handle as FileSystemDirectoryHandle, relative))
+      )
     }
   }
   return names
@@ -142,16 +151,21 @@ const writeRelative = async (
   return normalized
 }
 
+const namesFor = (basename: string): string[] => {
+  const aliases = CONTROLLER_FILE_ALIASES[basename] ?? []
+  return [basename, ...aliases]
+}
+
 const findBasename = async (
   root: FileSystemDirectoryHandle,
   basename: string,
   prefix = ""
 ): Promise<string | null> => {
-  const upper = basename.toUpperCase()
+  const wanted = new Set(namesFor(basename).map((name) => name.toUpperCase()))
   // @ts-expect-error — async iterator
   for await (const [name, handle] of root.entries()) {
     const relative = prefix ? `${prefix}/${name}` : name
-    if (handle.kind === "file" && name.toUpperCase() === upper) {
+    if (handle.kind === "file" && wanted.has(name.toUpperCase())) {
       return relative
     }
     if (handle.kind === "directory") {
@@ -168,6 +182,25 @@ const findBasename = async (
   return null
 }
 
+const pickSingleFile = (accept: string, label: string): Promise<File | null> =>
+  new Promise((resolve) => {
+    const input = document.createElement("input")
+    input.type = "file"
+    if (accept) {
+      input.accept = accept
+    }
+    input.style.display = "none"
+    input.setAttribute("aria-label", label)
+    const handleChange = () => {
+      input.removeEventListener("change", handleChange)
+      document.body.removeChild(input)
+      resolve(input.files?.item(0) ?? null)
+    }
+    input.addEventListener("change", handleChange)
+    document.body.appendChild(input)
+    input.click()
+  })
+
 export interface ChromiumFsState {
   source: FileSystemDirectoryHandle | null
   output: FileSystemDirectoryHandle | null
@@ -175,6 +208,8 @@ export interface ChromiumFsState {
   outputLabel: string | null
   sourceGranted: boolean
   outputGranted: boolean
+  /** File API overrides when FSA hides names like SYSTEM.SYS. */
+  sourceOverrides: Map<string, File>
 }
 
 export const createChromiumFs = () => {
@@ -184,7 +219,8 @@ export const createChromiumFs = () => {
     sourceLabel: null,
     outputLabel: null,
     sourceGranted: false,
-    outputGranted: false
+    outputGranted: false,
+    sourceOverrides: new Map()
   }
 
   const folders = (): LinkedFolders => ({
@@ -206,6 +242,7 @@ export const createChromiumFs = () => {
       state.source = handle
       state.sourceLabel = handle.name
       state.sourceGranted = granted
+      state.sourceOverrides.clear()
     } else {
       state.output = handle
       state.outputLabel = handle.name
@@ -261,6 +298,19 @@ export const createChromiumFs = () => {
     return state.output
   }
 
+  const overrideKeys = (): string[] => [...state.sourceOverrides.keys()]
+
+  const hasControllerName = (listing: readonly string[], basename: string): boolean => {
+    const wanted = new Set(namesFor(basename).map((name) => name.toUpperCase()))
+    if (overrideKeys().some((key) => wanted.has(key.toUpperCase()))) {
+      return true
+    }
+    return listing.some((entry) => {
+      const leaf = entry.replace(/\\/g, "/").split("/").pop() ?? entry
+      return wanted.has(leaf.toUpperCase())
+    })
+  }
+
   const fs: FileSystemPort = {
     pickSourceFolder: async () => {
       const handle = await showDirectoryPicker("read")
@@ -284,7 +334,6 @@ export const createChromiumFs = () => {
     },
     writeOutput: async (path, contents) => {
       const root = requireOutput()
-      // Strip any absolute-looking prefix; web paths are relative to the output handle.
       const relative = path.replace(/^[/\\]+/, "").replace(/\\/g, "/")
       return writeRelative(root, relative, contents)
     }
@@ -292,18 +341,75 @@ export const createChromiumFs = () => {
 
   const listSourceEntries = async (): Promise<string[]> => {
     const root = requireSource()
-    return listBasenames(root)
+    const fromDir = await listRelativeFiles(root)
+    const extras = overrideKeys().filter(
+      (name) =>
+        !fromDir.some(
+          (entry) =>
+            (entry.replace(/\\/g, "/").split("/").pop() ?? entry).toUpperCase() ===
+            name.toUpperCase()
+        )
+    )
+    return [...fromDir, ...extras]
   }
 
   const readSourceFile = async (basename: string): Promise<string> => {
+    for (const candidate of namesFor(basename)) {
+      const override = state.sourceOverrides.get(candidate)
+      if (override) {
+        return override.text()
+      }
+      for (const [key, file] of state.sourceOverrides) {
+        if (key.toUpperCase() === candidate.toUpperCase()) {
+          return file.text()
+        }
+      }
+    }
     const root = requireSource()
     const relative = await findBasename(root, basename)
     if (!relative) {
-      throw new Error(`Missing ${basename} in linked source folder`)
+      throw new Error(
+        `Missing ${basename} in linked source folder` +
+          (basename.toUpperCase() === "SYSTEM.SYS"
+            ? " (Chrome may hide .SYS — use Upload SYSTEM.SYS or rename to SYSTEM.SYS.TXT)"
+            : "")
+      )
     }
-    const fileHandle = await resolveFile(root, relative)
-    const file = await fileHandle.getFile()
-    return file.text()
+    try {
+      const fileHandle = await resolveFile(root, relative)
+      const file = await fileHandle.getFile()
+      return file.text()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `Could not read ${basename} (${relative}): ${message}. ` +
+          "If this is SYSTEM.SYS, upload it via the File picker or rename to SYSTEM.SYS.TXT."
+      )
+    }
+  }
+
+  const ensureControllerFiles = async (names: readonly string[]): Promise<void> => {
+    requireSource()
+    const listing = await listSourceEntries()
+    const requiredSet = new Set<string>(REQUIRED_FILES)
+    for (const name of names) {
+      if (hasControllerName(listing, name)) {
+        continue
+      }
+      if (!requiredSet.has(name) && name.toUpperCase() !== "SYSTEM.SYS") {
+        continue
+      }
+      const accept =
+        name.toUpperCase() === "SYSTEM.SYS" ? ".sys,.SYS,.txt,.TXT,text/plain" : ""
+      const picked = await pickSingleFile(
+        accept,
+        `Select ${name} (browser folder link did not expose it)`
+      )
+      if (!picked) {
+        continue
+      }
+      state.sourceOverrides.set(name, picked)
+    }
   }
 
   const mirrorProfilesJson = async (json: string): Promise<string | null> => {
@@ -319,6 +425,7 @@ export const createChromiumFs = () => {
       state.source = null
       state.sourceLabel = null
       state.sourceGranted = false
+      state.sourceOverrides.clear()
     } else {
       state.output = null
       state.outputLabel = null
@@ -334,6 +441,7 @@ export const createChromiumFs = () => {
     reconnectOutput: () => reconnect("output"),
     listSourceEntries,
     readSourceFile,
+    ensureControllerFiles,
     mirrorProfilesJson,
     clearRole,
     refreshPermissionState: restore

@@ -103,6 +103,28 @@ describe("backup scan", () => {
     expect(nested.ready).toBe(true)
     expect(nested.required[0].path).toBe(`${FOLDER}\\CF/SYSTEM.SYS`)
   })
+
+  it("finds controller files case-insensitively at any depth", () => {
+    const nested = scanBackup(FOLDER, [
+      "ROBOT/CMOS/system.sys",
+      "ROBOT/CMOS/rc.prm",
+      "ROBOT/CMOS/tool.cnd",
+      "ROBOT/CMOS/uframe.cnd"
+    ])
+    expect(nested.ready).toBe(true)
+    expect(nested.required[0].path).toBe(`${FOLDER}\\ROBOT/CMOS/system.sys`)
+  })
+
+  it("accepts SYSTEM.SYS.TXT alias when .SYS is hidden from the browser", () => {
+    const aliased = scanBackup(FOLDER, [
+      "SYSTEM.SYS.TXT",
+      "RC.PRM",
+      "TOOL.CND",
+      "UFRAME.CND"
+    ])
+    expect(aliased.ready).toBe(true)
+    expect(aliased.required[0].path).toBe(`${FOLDER}\\SYSTEM.SYS.TXT`)
+  })
 })
 
 describe("profile from backup", () => {
