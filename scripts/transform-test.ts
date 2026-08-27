@@ -9,14 +9,14 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseJob } from "../src/lib/jbi/parse.ts"
+import { parseJob } from "@yaskawa/core/jbi/parse"
 import {
   previewFrameMove,
   previewFrameFlipJob,
   previewMirrorJob,
   previewOffsetJob
-} from "../src/lib/jbi/frameTransform.ts"
-import type { CartesianPose } from "../src/lib/kin/client.ts"
+} from "../apps/desktop/src/lib/jbi/frameTransform.ts"
+import type { CartesianPose } from "@yaskawa/core/kin/types"
 
 const here = fileURLToPath(new URL(".", import.meta.url))
 const repoRoot = join(here, "..")
@@ -26,11 +26,11 @@ let failed = 0
 
 const assert = (cond: boolean, message: string) => {
   if (cond) {
-    console.log(`ok — ${message}`)
+    console.log(`ok â€” ${message}`)
     return
   }
   failed += 1
-  console.error(`FAIL — ${message}`)
+  console.error(`FAIL â€” ${message}`)
 }
 
 const readFixture = (name: string): string =>
@@ -87,7 +87,7 @@ const assertPosesClose = (
 
 /**
  * Local YZ mirror for cartesian fixture checks (matches kinematics/transform.py
- * for the near-180° orientations in USER_CART_S1). Used when sidecar is offline.
+ * for the near-180Â° orientations in USER_CART_S1). Used when sidecar is offline.
  */
 const mirrorYzLocal = (pose: CartesianPose): CartesianPose => ({
   x: -pose.x,
@@ -116,7 +116,7 @@ const run = async () => {
     sourceLabel: "USER_CART_S1.JBI"
   })
   const transferActual = collectUserPoses(transfer.after)
-  assert(transferActual.userId === 3, "previewFrameMove → ///USER 3")
+  assert(transferActual.userId === 3, "previewFrameMove â†’ ///USER 3")
   assert(transfer.after.includes("//NAME USER_CART_S1_UF3"), "transfer renames job")
   assertPosesClose(transferActual.poses, source.poses, "transfer preview poses identical")
 
@@ -155,18 +155,18 @@ const run = async () => {
       sourceLabel: "USER_CART_S1.JBI"
     })
     const flipActual = collectUserPoses(flipped.after)
-    assert(flipActual.userId === 3, "Flip preview → ///USER 3")
+    assert(flipActual.userId === 3, "Flip preview â†’ ///USER 3")
     assert(flipped.after.includes("//NAME USER_CART_S1_FLIP_UF3"), "Flip renames with _FLIP_UF3")
     assertPosesClose(flipActual.poses, flipExpected.poses, "Flip preview vs FLIP_UF3 fixture")
   } catch (error) {
     console.log(
-      `skip — sidecar Flip (${error instanceof Error ? error.message : String(error)}); fixture file still present`
+      `skip â€” sidecar Flip (${error instanceof Error ? error.message : String(error)}); fixture file still present`
     )
   }
 
   const mirrorExpected = collectUserPoses(readFixture("USER_CART_S1_MYZ.JBI"))
   assert(mirrorExpected.userId === 2, "mirror YZ keeps ///USER 2")
-  assert(mirrorExpected.poses[0].x < 0, "mirror YZ first pose −X")
+  assert(mirrorExpected.poses[0].x < 0, "mirror YZ first pose âˆ’X")
   assertPosesClose(
     mirrorExpected.poses,
     source.poses.map(mirrorYzLocal),
@@ -188,7 +188,7 @@ const run = async () => {
     mirrorViaKin = true
   } catch (error) {
     console.log(
-      `skip — sidecar mirror (${error instanceof Error ? error.message : String(error)}); fixture math still checked`
+      `skip â€” sidecar mirror (${error instanceof Error ? error.message : String(error)}); fixture math still checked`
     )
   }
 
@@ -237,7 +237,7 @@ const run = async () => {
     assertPosesClose(offsetActual.poses, offsetExpected.poses, "offset preview vs OFF_X100")
   } catch (error) {
     console.log(
-      `skip — sidecar offset (${error instanceof Error ? error.message : String(error)}); fixture math still checked`
+      `skip â€” sidecar offset (${error instanceof Error ? error.message : String(error)}); fixture math still checked`
     )
   }
 

@@ -1,6 +1,6 @@
 # Developer guide
 
-Windows desktop app for lossless YRC1000 `.JBI` editing (Tauri + React/Tailwind + Python kinematics sidecar).
+Desktop app for lossless YRC1000 `.JBI` editing (Tauri + React/Tailwind + Python kinematics sidecar). Windows and Ubuntu portable USB builds share the same folder.
 
 **Agents:** read [`../AGENT_HANDOFF.md`](../AGENT_HANDOFF.md) first for architecture, file map, gates, and where-to-change (token-efficient). This guide is the human install/runbook. Motoman portal research: [`MOTOMAN_DEVELOPER_FINDINGS.md`](./MOTOMAN_DEVELOPER_FINDINGS.md).
 
@@ -56,6 +56,74 @@ Production build:
 ```bat
 npm run build
 ```
+
+## Portable USB app (no Node/Python on the target PC)
+
+Build **once** on a machine that has Node, Rust, and Python. The locked shop PC only needs the resulting folder on a USB stick. Windows and Ubuntu binaries share `portable/YaskawaJobEditor/` — each OS build updates only its own files.
+
+### Build Windows files
+
+```bat
+cd yaskawa-job-editor
+pip install pyinstaller
+Build-Portable-USB.bat
+```
+
+Or:
+
+```bat
+npm run build:portable
+```
+
+### Build Ubuntu files
+
+Must run on Ubuntu or WSL (Linux binaries cannot be compiled on Windows):
+
+```bash
+cd yaskawa-job-editor
+./scripts/ubuntu-portable-deps.sh build
+pip install pyinstaller numpy scipy
+./Build-Portable-USB.sh
+```
+
+Or:
+
+```bash
+npm run build:portable:linux
+```
+
+Output folder: `portable/YaskawaJobEditor/` containing:
+
+Windows: `Yaskawa Job Editor.exe`, `yaskawa-kin.exe`, `Run.bat`  
+Ubuntu: `Yaskawa Job Editor.sh` (the single file to open), `yaskawa-job-editor`, `yaskawa-kin`  
+Shared: `README-PORTABLE.txt`
+
+### Copy onto a USB
+
+Windows:
+
+```bat
+Install-Portable-to-D.bat
+```
+
+Or another drive letter:
+
+```bat
+powershell -File scripts\Install-Portable-to-Drive.ps1 -Drive E
+```
+
+Ubuntu:
+
+```bash
+./scripts/install-portable-to-drive.sh /media/$USER/YOUR_USB
+```
+
+On the locked PC:
+
+- Windows: open the folder and double-click **Run.bat**
+- Ubuntu: open **Yaskawa Job Editor.sh** (or `bash "Yaskawa Job Editor.sh"`)
+
+**Notes:** Windows 10/11 + WebView2 required (usually already present). Ubuntu 22.04+ needs `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0` once per machine. IT may still block EXE from removable drives. Prefer putting edited-job output folders on the USB as well. Profile prefs may still live under the user config folder on that PC.
 
 ## First-run: robot profile + forced setup
 
@@ -157,6 +225,7 @@ Also useful: `npx tsc --noEmit` for TypeScript.
 ```text
 yaskawa-job-editor/
   start.bat / stop.bat   Windows launchers (PID file `.dev.pids`)
+  Build-Portable-USB.sh  Ubuntu portable USB build (keeps Windows files)
   src/
     features/          setup, wizard, library, editor, calibration (+ guided), transform, diff
     lib/jbi/           parse, serialize, library, edit, cnd, diff, frameTransform
@@ -267,7 +336,9 @@ See [`../ymconnect/README.md`](../ymconnect/README.md). Install SDK from [GitHub
 | Forced setup cannot leave | Finish source, output, CND, safety (calibration may be skipped) |
 | Job writes / USB export locked | Calibration gate closed for active robot — Guided wizard → Apply |
 | Geometry locked / “Complete robot install” | No active profile |
-| `sidecar: offline` | Python/deps/Tauri spawn — `npm run kin`, `pip install -r kinematics/requirements.txt` |
+| `sidecar: offline` | Python/deps/Tauri spawn — `npm run kin`, `pip install -r kinematics/requirements.txt`. Portable USB needs `yaskawa-kin.exe` (Windows) or `yaskawa-kin` (Ubuntu) beside the app. |
+| Ubuntu `.sh` says Linux binary missing | Build on Ubuntu/WSL with `./Build-Portable-USB.sh` (Windows build cannot create Linux binaries) |
+| Ubuntu window never opens | `sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`; if USB is noexec, run `bash "Yaskawa Job Editor.sh"` |
 | Roundtrip FAIL + `*.roundtrip-fail` | Serialize changed formatting — restore `raw` preservation |
 | YMConnect unavailable | Build/link `ymconnect/YmConnectBridge` or set `YMCONNECT_BRIDGE` |
 | Guided export fails | Output folder not set |

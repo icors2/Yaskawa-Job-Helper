@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseJob, nposMismatch } from "../src/lib/jbi/parse.ts"
-import { serializeJob } from "../src/lib/jbi/serialize.ts"
+import { parseJob, nposMismatch } from "@yaskawa/core/jbi/parse"
+import { serializeJob } from "@yaskawa/core/jbi/serialize"
 
 const here = fileURLToPath(new URL(".", import.meta.url))
 const repoRoot = join(here, "..")

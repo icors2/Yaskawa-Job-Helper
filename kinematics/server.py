@@ -7,6 +7,7 @@ Field names are camelCase so they match src/lib/kin/client.ts.
 Request types:
   ping, forward_kinematics, calibrate, transform_frame,
   transform_mirror, transform_offset, transform_frame_flip,
+  fit_station_flip, apply_station_flip,
   read_uframe, read_tool, scan_backup, create_profile_from_backup,
   load_profile, get_profile
 """
@@ -41,6 +42,7 @@ from robot_profile import (
     scan_backup,
 )
 from frame_flip import convert_poses
+from station_flip import FlipRecipe, apply_flip_with_ik, fit_flip
 from transform import (
     frame_move,
     mirror,
@@ -67,6 +69,8 @@ METHODS = (
     "offset",
     "transform_frame_flip",
     "frame_flip",
+    "fit_station_flip",
+    "apply_station_flip",
     "read_uframe",
     "read_tool",
     "verify_rcprm",
@@ -163,6 +167,31 @@ def require(req: dict[str, Any], *keys: str) -> None:
 
 def _pose_from(data: dict[str, Any]) -> Pose:
     return Pose.from_dict(data)
+
+
+def _pose_list(items: object) -> list[Pose]:
+    if not isinstance(items, list):
+        return []
+    return [_pose_from(item) for item in items if isinstance(item, dict)]
+
+
+def _pulse_rows(items: object) -> list[list[float]]:
+    if not isinstance(items, list):
+        return []
+    rows: list[list[float]] = []
+    for item in items:
+        if isinstance(item, (list, tuple)):
+            rows.append([float(v) for v in item[:6]])
+    return rows
+
+
+def _profile_limits() -> tuple[list[float] | None, list[float] | None]:
+    profile = STATE.profile
+    if profile is None:
+        return None, None
+    pos = list(profile.pulse_limits_pos) if profile.pulse_limits_pos else None
+    neg = list(profile.pulse_limits_neg) if profile.pulse_limits_neg else None
+    return pos, neg
 
 
 def handle_ping(req: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +317,78 @@ def handle_transform_frame_flip(req: dict[str, Any]) -> dict[str, Any]:
 
 def handle_frame_flip_alias(req: dict[str, Any]) -> dict[str, Any]:
     return handle_transform_frame_flip(req)
+
+
+def handle_fit_station_flip(req: dict[str, Any]) -> dict[str, Any]:
+    uf_source = _resolve_uf_pose(req, "sourceUf", "sourceFrameId")
+    uf_target = _resolve_uf_pose(req, "targetUf", "targetFrameId")
+    tool = STATE.tool_pose(req.get("toolId"))
+    source_pulses = _pulse_rows(req.get("sourcePulses") or req.get("source_pulses"))
+    target_pulses = _pulse_rows(req.get("targetPulses") or req.get("target_pulses"))
+    source_poses = _pose_list(req.get("sourcePoses") or req.get("source_poses"))
+    target_poses = _pose_list(req.get("targetPoses") or req.get("target_poses"))
+    if not source_pulses and not source_poses:
+        raise ValueError("fit_station_flip requires sourcePulses or sourcePoses")
+    if not target_pulses and not target_poses:
+        raise ValueError("fit_station_flip requires targetPulses or targetPoses")
+    source_frame_id = req.get("sourceFrameId")
+    target_frame_id = req.get("targetFrameId")
+    result = fit_flip(
+        source_pulses=source_pulses or None,
+        target_pulses=target_pulses or None,
+        uf_source=uf_source,
+        uf_target=uf_target,
+        tool=tool,
+        params=STATE.params,
+        source_poses=source_poses or None,
+        target_poses=target_poses or None,
+        source_frame_id=int(source_frame_id) if source_frame_id is not None else None,
+        target_frame_id=int(target_frame_id) if target_frame_id is not None else None,
+        source_job_name=str(req.get("sourceJobName") or req.get("source_job_name") or ""),
+        target_job_name=str(req.get("targetJobName") or req.get("target_job_name") or ""),
+        job_family=str(req.get("jobFamily") or req.get("job_family") or ""),
+    )
+    return ok(req["id"], result.to_dict())
+
+
+def handle_apply_station_flip(req: dict[str, Any]) -> dict[str, Any]:
+    recipe_data = req.get("recipe")
+    if not isinstance(recipe_data, dict):
+        raise ValueError("apply_station_flip requires recipe")
+    recipe = FlipRecipe.from_dict(recipe_data)
+    uf_source = _resolve_uf_pose(req, "sourceUf", "sourceFrameId")
+    uf_target = _resolve_uf_pose(req, "targetUf", "targetFrameId")
+    tool = STATE.tool_pose(req.get("toolId"))
+    pulses = _pulse_rows(req.get("pulses") or req.get("sourcePulses"))
+    poses = _pose_list(req.get("poses") or req.get("sourcePoses"))
+    if not pulses and not poses:
+        raise ValueError("apply_station_flip requires pulses or poses")
+    limits_pos, limits_neg = _profile_limits()
+    points = apply_flip_with_ik(
+        source_pulses=pulses,
+        recipe=recipe,
+        uf_source=uf_source,
+        uf_target=uf_target,
+        tool=tool,
+        params=STATE.params,
+        pulse_limits_pos=limits_pos,
+        pulse_limits_neg=limits_neg,
+        source_poses=poses or None,
+    )
+    failed = [p for p in points if not p.ik.reachable]
+    target_id = req.get("targetFrameId")
+    return ok(
+        req["id"],
+        {
+            "poses": [point.pose.to_dict() for point in points],
+            "points": [point.to_dict() for point in points],
+            "targetFrameId": int(target_id) if target_id is not None else None,
+            "saveBlocked": len(failed) > 0,
+            "reachableCount": len(points) - len(failed),
+            "failedCount": len(failed),
+            "recipe": recipe.to_dict(),
+        },
+    )
 
 
 def handle_read_uframe(req: dict[str, Any]) -> dict[str, Any]:
@@ -540,6 +641,8 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "offset": handle_offset_alias,
     "transform_frame_flip": handle_transform_frame_flip,
     "frame_flip": handle_frame_flip_alias,
+    "fit_station_flip": handle_fit_station_flip,
+    "apply_station_flip": handle_apply_station_flip,
     "read_uframe": handle_read_uframe,
     "read_tool": handle_read_tool,
     "verify_rcprm": handle_verify_rcprm,
