@@ -5,12 +5,15 @@
 
 import {
   AR2010_REACH_MM,
+  HOME_PULSES,
   defaultParams,
   defaultTool,
   forwardKinematics,
   type Ar2010Params
 } from "./fk"
+import { inverseKinematics, type IkResult } from "./ik"
 import {
+  composePoses,
   identity4,
   matrixToPose,
   multiply3,
@@ -117,6 +120,101 @@ export const transformMirrorPoses = (
   poses: poses.map((pose) => mirrorPose(pose, plane).pose),
   rconfReviewRequired: true
 })
+
+export interface MirrorPointResult {
+  index: number
+  pose: CartesianPose
+  ik: IkResult
+}
+
+const pulsesInUf = (
+  pulseRows: readonly (readonly number[])[],
+  userFrame: CartesianPose,
+  tool: CartesianPose | null | undefined,
+  params: Ar2010Params | undefined
+): CartesianPose[] => {
+  const tcp = tool ?? defaultTool()
+  const model = params ?? defaultParams()
+  return pulseRows.map((row) => {
+    const result = forwardKinematics(row, { tool: tcp, params: model })
+    return relativePose(result.pose, userFrame)
+  })
+}
+
+/**
+ * Same-UF plane mirror with per-point IK for RCONF + reach/limits gating.
+ * Mirrors the station-flip safety pattern without changing C/P identity
+ * (callers emit vars; this only returns poses + IK).
+ */
+export const applyMirrorWithIk = (args: {
+  sourcePulses?: readonly (readonly number[])[]
+  sourcePoses?: readonly CartesianPose[] | null
+  plane: MirrorPlane
+  uf: CartesianPose
+  tool?: CartesianPose | null
+  params?: Ar2010Params
+  pulseLimitsPos?: readonly number[]
+  pulseLimitsNeg?: readonly number[]
+}): MirrorPointResult[] => {
+  const tcp = args.tool ?? defaultTool()
+  const model = args.params ?? defaultParams()
+  const ufPoses =
+    args.sourcePoses && args.sourcePoses.length
+      ? [...args.sourcePoses]
+      : pulsesInUf(args.sourcePulses ?? [], args.uf, tcp, model)
+  const seeds = args.sourcePulses ? [...args.sourcePulses] : []
+  const results: MirrorPointResult[] = []
+  for (let index = 0; index < ufPoses.length; index += 1) {
+    const mirroredUf = mirrorPose(ufPoses[index], args.plane).pose
+    const targetBase = composePoses(args.uf, mirroredUf)
+    let seed: readonly number[]
+    if (index < seeds.length && seeds[index].length >= 6) {
+      seed = seeds[index]
+    } else {
+      const origBase = composePoses(args.uf, ufPoses[index])
+      const seedIk = inverseKinematics(origBase, HOME_PULSES, {
+        tool: tcp,
+        params: model,
+        pulseLimitsPos: args.pulseLimitsPos,
+        pulseLimitsNeg: args.pulseLimitsNeg
+      })
+      seed = seedIk.reachable ? seedIk.pulses : HOME_PULSES
+    }
+    const ikResult = inverseKinematics(targetBase, seed, {
+      tool: tcp,
+      params: model,
+      pulseLimitsPos: args.pulseLimitsPos,
+      pulseLimitsNeg: args.pulseLimitsNeg
+    })
+    results.push({ index, pose: mirroredUf, ik: ikResult })
+  }
+  return results
+}
+
+export const applyMirrorToWire = (points: MirrorPointResult[], retainedUserFrameId: number) => {
+  const failed = points.filter((p) => !p.ik.reachable)
+  return {
+    poses: points.map((p) => p.pose),
+    points: points.map((p) => ({
+      index: p.index,
+      pose: p.pose,
+      pulses: p.ik.pulses,
+      degrees: p.ik.degrees,
+      reachable: p.ik.reachable,
+      withinLimits: p.ik.withinLimits,
+      positionErrorMm: p.ik.positionErrorMm,
+      orientationErrorDeg: p.ik.orientationErrorDeg,
+      rconf: p.ik.rconf,
+      rconfText: p.ik.rconfText,
+      message: p.ik.message,
+      limitViolations: p.ik.limitViolations
+    })),
+    retainedUserFrameId,
+    saveBlocked: failed.length > 0,
+    reachableCount: points.length - failed.length,
+    failedCount: failed.length
+  }
+}
 
 export const offsetPose = (
   pose: CartesianPose,

@@ -12,6 +12,8 @@ import {
   transformFrameFlipPoses
 } from "@yaskawa/core/kin/frameFlip"
 import {
+  applyMirrorToWire,
+  applyMirrorWithIk,
   transformFramePulses,
   transformMirrorPoses,
   transformOffsetPoses
@@ -60,6 +62,33 @@ const collectPulseRows = (original: string): number[][] => {
     }
   }
   return pulseRows
+}
+
+interface PulseVarRef {
+  kind: "C" | "P"
+  index: number
+  pulses: number[]
+}
+
+const collectPulseVarRefs = (original: string): PulseVarRef[] => {
+  const job = parseJob(original)
+  const refs: PulseVarRef[] = []
+  for (const group of job.posGroups) {
+    if (String(group.postype).toUpperCase() !== "PULSE") {
+      continue
+    }
+    for (const posVar of group.vars) {
+      if (posVar.kind !== "C" && posVar.kind !== "P") {
+        continue
+      }
+      refs.push({
+        kind: posVar.kind,
+        index: posVar.index,
+        pulses: parsePulseRow(posVar.raw)
+      })
+    }
+  }
+  return refs
 }
 
 export type StationSide = "left" | "right"
@@ -391,7 +420,8 @@ const emitPulseAsUser = (
   poses: CartesianPose[],
   userFrameId: number,
   nameSuffix: string,
-  sourceLabel?: string
+  sourceLabel?: string,
+  identities?: readonly { kind: "C" | "P"; index: number }[]
 ): FrameMovePreview => {
   const job = parseJob(original)
   const headers = job.posGroups[0]?.headers.filter((h) => h.key === "NPOS" || h.key === "TOOL") ?? []
@@ -411,13 +441,18 @@ const emitPulseAsUser = (
           raw: "///RCONF 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
         }
       ],
-      vars: poses.map((pose, index) => {
-        const idx = 100 + index
-        const raw = `P${String(idx).padStart(5, "0")}=${formatPose(pose)}`
+      vars: poses.map((pose, i) => {
+        // Prefer source C/P identity. Never invent P when source was C.
+        // Pulse→USER without identities: emit C (cartesian), not P.
+        const id = identities?.[i]
+        const kind = id?.kind ?? "C"
+        const idx = id?.index ?? i
+        const formatted = formatPose(pose)
+        const raw = `${kind}${String(idx).padStart(5, "0")}=${formatted}`
         return {
-          kind: "P" as const,
+          kind,
           index: idx,
-          values: formatPose(pose).split(","),
+          values: formatted.split(","),
           raw
         }
       })
@@ -502,12 +537,32 @@ const previewPulseAxisMirror = (
   }
 }
 
+export interface StationFlipReachRow {
+  index: number
+  reachable: boolean
+  withinLimits: boolean
+  positionErrorMm: number
+  orientationErrorDeg: number
+  rconfText: string
+  message: string
+}
+
+const rconfHeader = (text: string) => ({
+  key: "RCONF",
+  value: text,
+  raw: `///RCONF ${text}`
+})
+
 export interface MirrorJobPreview extends FrameMovePreview {
   rconfReviewRequired: boolean
   /** True when the approximate pulse-axis path was used. */
   usedPulseAxisFlips?: boolean
   /** USER frame id kept on output (same-station mirror). */
   retainedUserFrameId?: number
+  saveBlocked: boolean
+  reachableCount: number
+  failedCount: number
+  reachReport: StationFlipReachRow[]
 }
 
 const mirrorNameSuffix = (
@@ -523,10 +578,86 @@ const mirrorNameSuffix = (
   return `_M${plane}`
 }
 
+const DEFAULT_MIRROR_RCONF = "1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
+
+/**
+ * Emit USER cartesian poses grouped by RCONF, preserving each var's C/P kind + index.
+ * Never invents P#### for a source that was C####.
+ */
+const emitPosesWithRconfPreservingIds = (
+  original: string,
+  poses: CartesianPose[],
+  rconfTexts: string[],
+  identities: readonly { kind: "C" | "P"; index: number }[],
+  userFrameId: number,
+  nameSuffix: string,
+  sourceLabel?: string
+): FrameMovePreview => {
+  const job = parseJob(original)
+  const nposTool = job.posGroups[0]?.headers.filter((h) => h.key === "NPOS" || h.key === "TOOL") ?? []
+  const groups: typeof job.posGroups = []
+  let currentRconf = ""
+  for (let i = 0; i < poses.length; i += 1) {
+    const pose = poses[i]
+    const rconf = rconfTexts[i] || DEFAULT_MIRROR_RCONF
+    const id = identities[i]
+    if (!id) {
+      throw new Error(`Missing C/P identity for mirrored pose ${i}`)
+    }
+    if (id.kind !== "C" && id.kind !== "P") {
+      throw new Error(`Invalid pos var kind for mirrored pose ${i}`)
+    }
+    const formatted = formatPose(pose)
+    const posVar = {
+      kind: id.kind,
+      index: id.index,
+      values: formatted.split(","),
+      raw: `${id.kind}${String(id.index).padStart(5, "0")}=${formatted}`
+    }
+    if (groups.length === 0 || rconf !== currentRconf) {
+      currentRconf = rconf
+      const extra = groups.length === 0 ? nposTool : []
+      groups.push({
+        postype: "USER",
+        user: String(userFrameId),
+        tool: "0",
+        headers: [
+          ...extra,
+          { key: "USER", value: String(userFrameId), raw: `///USER ${userFrameId}` },
+          { key: "POSTYPE", value: "USER", raw: "///POSTYPE USER" },
+          { key: "RECTAN", value: "", raw: "///RECTAN" },
+          rconfHeader(rconf)
+        ],
+        vars: [posVar]
+      })
+    } else {
+      groups[groups.length - 1].vars.push(posVar)
+    }
+  }
+  job.posGroups = groups
+  const nextName = `${job.name}${nameSuffix}`
+  job.name = nextName
+  for (const header of job.headers) {
+    if (header.key === "NAME") {
+      header.value = nextName
+      header.raw = `//NAME ${nextName}`
+    }
+  }
+  const after = serializeJob(job, { recomputeNpos: true })
+  const outName = `${nextName}.JBI`
+  return {
+    before: original,
+    after,
+    outName,
+    diffText: unifiedDiff(original, after, sourceLabel ?? "source", outName),
+    poseCount: poses.length
+  }
+}
+
 /**
  * Mirror the loaded job in the active user frame (same ///USER on output).
- * Primary: cartesian USER/BASE in place, or PULSE→FK→USER then mirror.
- * Optional advanced: pulse-axis sign flips (approximate; warn in UI).
+ * Runs IK per point for ///RCONF + hard-blocks Write when any point fails.
+ * Preserves C/P kind and index (never C→P).
  */
 export const previewMirrorJob = async (args: {
   originalText: string
@@ -535,6 +666,8 @@ export const previewMirrorJob = async (args: {
   sourceUf?: CartesianPose
   tool?: CartesianPose | null
   params?: Ar2010Params
+  pulseLimitsPos?: readonly number[]
+  pulseLimitsNeg?: readonly number[]
   sourceLabel?: string
   /** When set, names the job as single-side mirror left/right (same math, same UF). */
   side?: StationSide
@@ -560,48 +693,77 @@ export const previewMirrorJob = async (args: {
       ...preview,
       rconfReviewRequired: true,
       usedPulseAxisFlips: true,
-      retainedUserFrameId: sourceFrameId
+      retainedUserFrameId: sourceFrameId,
+      // Pulse-axis path skips IK — hard-block writes (use cartesian IK path).
+      saveBlocked: true,
+      reachableCount: 0,
+      failedCount: preview.poseCount,
+      reachReport: []
     }
   }
 
-  const resolved = await resolveCartesianForJob({
-    originalText: args.originalText,
-    sourceFrameId,
-    sourceUf: args.sourceUf,
-    tool: args.tool,
-    params: args.params
-  })
-  const mirrored = transformMirrorPoses(resolved.poses, args.plane)
-  if (resolved.mode === "user") {
-    const preview = rewriteCartesianVars(
-      args.originalText,
-      resolved.refs,
-      mirrored.poses,
-      nameSuffix
+  if (!args.sourceUf) {
+    throw new Error(
+      "Mirror needs the source UF BUSER (X,Y,Z,Rx,Ry,Rz) for IK / RCONF. Load UFRAME.CND or enter it."
     )
-    return {
-      ...preview,
-      diffText: unifiedDiff(
-        args.originalText,
-        preview.after,
-        args.sourceLabel ?? "source",
-        preview.outName
-      ),
-      rconfReviewRequired: mirrored.rconfReviewRequired,
-      retainedUserFrameId: sourceFrameId
-    }
   }
-  const preview = emitPulseAsUser(
+
+  const cartRefs = collectCartesianVars(args.originalText)
+  const pulseRefs = cartRefs.length === 0 ? collectPulseVarRefs(args.originalText) : []
+  if (cartRefs.length === 0 && pulseRefs.length === 0) {
+    throw new Error(
+      "No USER/BASE cartesian poses or PULSE C/P vars found in this job to transform."
+    )
+  }
+
+  const sourcePoses =
+    cartRefs.length > 0 ? cartRefs.map((ref) => ref.pose) : undefined
+  const sourcePulses =
+    pulseRefs.length > 0 ? pulseRefs.map((ref) => ref.pulses) : undefined
+  const identities =
+    cartRefs.length > 0
+      ? cartRefs.map((ref) => ({ kind: ref.kind, index: ref.index }))
+      : pulseRefs.map((ref) => ({ kind: ref.kind, index: ref.index }))
+
+  const points = applyMirrorWithIk({
+    plane: args.plane,
+    uf: args.sourceUf,
+    sourcePoses,
+    sourcePulses,
+    tool: args.tool === undefined ? defaultTool() : args.tool,
+    params: args.params,
+    pulseLimitsPos: args.pulseLimitsPos,
+    pulseLimitsNeg: args.pulseLimitsNeg
+  })
+  const applied = applyMirrorToWire(points, sourceFrameId)
+  const rconfTexts = applied.points.map(
+    (point) => point.rconfText || DEFAULT_MIRROR_RCONF
+  )
+  const preview = emitPosesWithRconfPreservingIds(
     args.originalText,
-    mirrored.poses,
+    applied.poses,
+    rconfTexts,
+    identities,
     sourceFrameId,
     nameSuffix,
     args.sourceLabel
   )
   return {
     ...preview,
-    rconfReviewRequired: mirrored.rconfReviewRequired,
-    retainedUserFrameId: sourceFrameId
+    rconfReviewRequired: true,
+    retainedUserFrameId: sourceFrameId,
+    saveBlocked: applied.saveBlocked,
+    reachableCount: applied.reachableCount,
+    failedCount: applied.failedCount,
+    reachReport: applied.points.map((point) => ({
+      index: point.index,
+      reachable: point.reachable,
+      withinLimits: point.withinLimits,
+      positionErrorMm: point.positionErrorMm,
+      orientationErrorDeg: point.orientationErrorDeg,
+      rconfText: point.rconfText,
+      message: point.message
+    }))
   }
 }
 
@@ -778,16 +940,6 @@ export const previewFrameFlipJob = async (args: {
   }
 }
 
-export interface StationFlipReachRow {
-  index: number
-  reachable: boolean
-  withinLimits: boolean
-  positionErrorMm: number
-  orientationErrorDeg: number
-  rconfText: string
-  message: string
-}
-
 export interface StationFlipPreview extends FrameMovePreview {
   saveBlocked: boolean
   reachableCount: number
@@ -795,12 +947,6 @@ export interface StationFlipPreview extends FrameMovePreview {
   reachReport: StationFlipReachRow[]
   familyWarning: string | null
 }
-
-const rconfHeader = (text: string) => ({
-  key: "RCONF",
-  value: text,
-  raw: `///RCONF ${text}`
-})
 
 const emitUserPosesWithRconf = (
   original: string,

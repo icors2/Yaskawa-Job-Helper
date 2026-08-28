@@ -305,7 +305,30 @@ export const TransformPage = () => {
           label
         )
       } else if (mode === "mirror") {
-        result = previewMirrorJob(text, mirrorPlane, label)
+        const srcPose = parseDeltaText(sourceUfText)
+        const mirrored = previewMirrorJob({
+          originalText: text,
+          plane: mirrorPlane,
+          sourceFrameId,
+          sourceUf: srcPose,
+          tool: active?.tool0,
+          params: active ? profileToParams(active) : undefined,
+          pulseLimitsPos: active?.pulseLimitsPos,
+          pulseLimitsNeg: active?.pulseLimitsNeg,
+          sourceLabel: label
+        })
+        setPreview(mirrored)
+        setOutName(mirrored.outName)
+        setReachReport(mirrored.reachReport)
+        setSaveBlocked(mirrored.saveBlocked)
+        setFamilyWarning(null)
+        const reachNote = mirrored.saveBlocked
+          ? `${mirrored.failedCount} point(s) failed IK or a joint limit — write is blocked.`
+          : `All ${mirrored.reachableCount} point(s) reachable.`
+        setStatus(
+          `Mirror ${mirrorPlane} preview — ${mirrored.poseCount} pose(s). ${reachNote}`
+        )
+        return
       } else if (mode === "offset") {
         result = previewOffsetJob(text, parseDeltaText(offsetText), label)
       } else {
@@ -512,19 +535,34 @@ export const TransformPage = () => {
         ) : null}
 
         {mode === "mirror" ? (
-          <label className="text-xs text-muted" htmlFor="mirror-plane">
-            Plane
-            <select
-              id="mirror-plane"
-              className="input-field ml-2"
-              value={mirrorPlane}
-              onChange={(event) => setMirrorPlane(event.target.value as MirrorPlane)}
-            >
-              <option value="XY">XY</option>
-              <option value="XZ">XZ</option>
-              <option value="YZ">YZ</option>
-            </select>
-          </label>
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted">
+              Same-UF plane mirror (not for mirrored S1/S2 fixtures — use Station flip). Needs source
+              UF BUSER for IK. Write is blocked if any point fails reach/limits.
+            </p>
+            <label className="text-xs text-muted" htmlFor="mirror-plane">
+              Plane
+              <select
+                id="mirror-plane"
+                className="input-field ml-2"
+                value={mirrorPlane}
+                onChange={(event) => setMirrorPlane(event.target.value as MirrorPlane)}
+              >
+                <option value="XY">XY</option>
+                <option value="XZ">XZ</option>
+                <option value="YZ">YZ</option>
+              </select>
+            </label>
+            <label className="text-xs text-muted" htmlFor="mirror-src-pose">
+              Source UF BUSER (required for IK)
+              <input
+                id="mirror-src-pose"
+                className="input-field mt-1 w-full max-w-xl font-mono"
+                value={sourceUfText}
+                onChange={(event) => setSourceUfText(event.target.value)}
+              />
+            </label>
+          </div>
         ) : null}
 
         {mode === "offset" ? (

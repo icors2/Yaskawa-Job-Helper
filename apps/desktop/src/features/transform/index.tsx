@@ -145,7 +145,7 @@ const deriveOutName = (args: {
   }
   if (args.mode === "singleSide") {
     const side = args.stationSide === "left" ? "L" : "R"
-    return `${stem}_SSM_${side}.JBI`
+    return `${stem}_SSM_${side}_${args.singleSidePlane}.JBI`
   }
   return `${stem}_OFF.JBI`
 }
@@ -376,7 +376,9 @@ export const TransformPage = ({
     clearPreview()
     setUsePulseAxisFlips(false)
     if (next === "mirror") {
-      setStatus("Mirror mode — reflection across the chosen plane; review RCONF on the pendant.")
+      setStatus(
+        "Mirror (same UF) — plane reflection in one user frame. Not for mirrored S1/S2 fixtures — use Station flip. Write is blocked if any point fails IK."
+      )
       return
     }
     if (next === "transfer") {
@@ -387,7 +389,7 @@ export const TransformPage = ({
     }
     if (next === "singleSide") {
       setStatus(
-        "Single-side mirror — same station / same ///USER. Prefer cartesian USER poses; PULSE uses FK→USER then mirror."
+        "Single-side mirror — same station / same ///USER only. Prefer cartesian USER poses; IK recomputes RCONF and blocks Write on failures."
       )
       return
     }
@@ -462,6 +464,10 @@ export const TransformPage = ({
       return
     }
     const sourceUf = parseUfPoseText(sourceUfText)
+    if (!sourceUf) {
+      setStatus("Source UF BUSER needs six numbers: X,Y,Z,Rx,Ry,Rz (required for IK / RCONF).")
+      return
+    }
     try {
       const original = await readTextFile(jobPath)
       const profile = getActiveProfile()
@@ -469,18 +475,27 @@ export const TransformPage = ({
         originalText: original,
         plane: mirrorPlane,
         sourceFrameId,
-        sourceUf: sourceUf ?? undefined,
+        sourceUf,
         tool: profile?.tool0,
         params: profile ? paramsFromProfileFields(profile) : undefined,
+        pulseLimitsPos: profile?.pulseLimitsPos,
+        pulseLimitsNeg: profile?.pulseLimitsNeg,
         sourceLabel: jobPath
       })
-      const nextOut = suggestedOutName()
+      const nextOut = mirrored.outName || suggestedOutName()
       applyPreviewResult(mirrored.after, mirrored.diffText, nextOut)
+      setReachReport(mirrored.reachReport)
+      setSaveBlocked(mirrored.saveBlocked)
       setRconfReview(mirrored.rconfReviewRequired)
+      const failNote = mirrored.saveBlocked
+        ? ` ${mirrored.failedCount} point(s) failed IK or joint limits — Write is blocked.`
+        : ` All ${mirrored.reachableCount} point(s) reachable.`
       setStatus(
-        `Mirror ${mirrorPlane} for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s) reflected. RCONF review required on pendant. Review the diff, then Write to output folder as ${nextOut}.`
+        `Mirror ${mirrorPlane} for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s).${failNote} Review the diff, then Write as ${nextOut}.`
       )
     } catch (error) {
+      setReachReport([])
+      setSaveBlocked(false)
       setStatus(error instanceof Error ? error.message : String(error))
     }
   }
@@ -490,6 +505,10 @@ export const TransformPage = ({
       return
     }
     const sourceUf = parseUfPoseText(sourceUfText)
+    if (!sourceUf && !(usePulseAxisFlips && pulsePrefs.advancedEnabled)) {
+      setStatus("Source UF BUSER needs six numbers: X,Y,Z,Rx,Ry,Rz (required for IK / RCONF).")
+      return
+    }
     try {
       const original = await readTextFile(jobPath)
       const profile = getActiveProfile()
@@ -500,22 +519,31 @@ export const TransformPage = ({
         sourceUf: sourceUf ?? undefined,
         tool: profile?.tool0,
         params: profile ? paramsFromProfileFields(profile) : undefined,
+        pulseLimitsPos: profile?.pulseLimitsPos,
+        pulseLimitsNeg: profile?.pulseLimitsNeg,
         sourceLabel: jobPath,
         side: stationSide,
         usePulseAxisFlips: usePulseAxisFlips && pulsePrefs.advancedEnabled,
         pulseAxisSigns: pulsePrefs.signs
       })
-      const nextOut = suggestedOutName()
+      const nextOut = mirrored.outName || suggestedOutName()
       applyPreviewResult(mirrored.after, mirrored.diffText, nextOut)
+      setReachReport(mirrored.reachReport)
+      setSaveBlocked(mirrored.saveBlocked)
       setRconfReview(mirrored.rconfReviewRequired)
       const sideLabel = stationSide === "left" ? "Left" : "Right"
       const pathNote = mirrored.usedPulseAxisFlips
-        ? " ADVANCED pulse-axis flips used — approximate; calibrate signs for this cell before production."
-        : " Same ///USER retained (cartesian preferred)."
+        ? " ADVANCED pulse-axis flips — Write blocked (no IK); use cartesian path for production."
+        : " Same ///USER retained."
+      const failNote = mirrored.saveBlocked
+        ? ` ${mirrored.failedCount} point(s) failed IK or joint limits — Write is blocked.`
+        : ` All ${mirrored.reachableCount} point(s) reachable.`
       setStatus(
-        `Single-side mirror (${sideLabel}, ${singleSidePlane}) for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s).${pathNote} RCONF review required. Review the diff, then Write to output folder as ${nextOut}.`
+        `Single-side mirror (${sideLabel}, ${singleSidePlane}) for ${displayName ?? jobPath}: ${mirrored.poseCount} pose(s).${pathNote}${mirrored.usedPulseAxisFlips ? "" : failNote} Review the diff, then Write as ${nextOut}.`
       )
     } catch (error) {
+      setReachReport([])
+      setSaveBlocked(false)
       setStatus(error instanceof Error ? error.message : String(error))
     }
   }
@@ -713,7 +741,9 @@ export const TransformPage = ({
       return
     }
     if (saveBlocked) {
-      setStatus("Save is blocked — one or more flipped points failed IK or a joint limit. See the reach report.")
+      setStatus(
+        "Save is blocked — one or more points failed IK or a joint limit. See the reach report."
+      )
       return
     }
     if (!writeGate.allowed) {
@@ -729,9 +759,21 @@ export const TransformPage = ({
       setStatus("Enter an output file name before writing.")
       return
     }
+    // Force quarantine suffix for mirror / single-side — never strip to production basename.
+    let writeName = name
+    if (mode === "mirror" || mode === "singleSide") {
+      const stem = jobStem(name)
+      const quarantineTag =
+        mode === "mirror"
+          ? `_M${mirrorPlane}`
+          : `_SSM_${stationSide === "left" ? "L" : "R"}_${singleSidePlane}`
+      if (!stem.toUpperCase().includes(quarantineTag.toUpperCase())) {
+        writeName = ensureJbiExtension(`${stem}${quarantineTag}`)
+      }
+    }
     try {
-      const written = await writeOutputFile(name, preview)
-      setOutName(name)
+      const written = await writeOutputFile(writeName, preview)
+      setOutName(writeName)
       setStatus(
         `Wrote ${written} (output folder only — source backup untouched).`
       )
@@ -757,11 +799,12 @@ export const TransformPage = ({
           Station operations: <span className="text-fg/90">Transfer</span> (identical fixtures),{" "}
           <span className="text-fg/90">Station flip (mirror)</span> (S1↔S2 reflection fitted from a
           pair), <span className="text-fg/90">Frame convert (Flip)</span> (remap cartesian between UF
-          BUSER poses), <span className="text-fg/90">Mirror</span> (mirrored fixtures),{" "}
-          <span className="text-fg/90">Single-side mirror</span> (same ///USER), and{" "}
-          <span className="text-fg/90">Offset</span>. Prefer cartesian USER/BASE jobs for Flip and
-          mirrors. Preview, then <span className="text-fg/90">Write to output folder</span> (never
-          the source backup). Uses the <span className="text-fg/80">active robot profile</span>.
+          BUSER poses), <span className="text-fg/90">Mirror</span> /{" "}
+          <span className="text-fg/90">Single-side mirror</span> (same ///USER — not for mirrored
+          S1/S2 fixtures; use Station flip), and <span className="text-fg/90">Offset</span>. Mirror
+          writes run IK and block on reach failures. Preview, then{" "}
+          <span className="text-fg/90">Write to output folder</span> (never the source backup). Uses
+          the <span className="text-fg/80">active robot profile</span>.
         </p>
         {!installGate.allowed ? (
           <p className="mt-2 rounded border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-accent-fg" role="status">
@@ -1304,11 +1347,12 @@ export const TransformPage = ({
 
       {mode === "mirror" ? (
         <div className="rounded border border-border bg-bg/50 p-4">
-          <h2 className="text-sm font-semibold text-fg">Mirror</h2>
+          <h2 className="text-sm font-semibold text-fg">Mirror (same user frame)</h2>
           <p className="mt-1 text-sm text-muted">
-            Use when left and right stations are <span className="text-fg/90">mirrored fixtures</span>.
-            Poses are reflected across the chosen plane. Always review RCONF on the pendant after a
-            mirror write. Active job:{" "}
+            Plane reflection in the <span className="text-fg/90">same ///USER</span>.{" "}
+            <span className="text-fg/90">Not for mirrored S1/S2 fixtures</span> — use{" "}
+            <span className="text-fg/90">Station flip</span> for that. IK recomputes RCONF; Write is
+            blocked if any point is unreachable or outside joint limits. Active job:{" "}
             <span className="font-mono text-fg/90">{displayName ?? "none"}</span>
           </p>
           <div className="mt-3 flex flex-wrap gap-3">
@@ -1359,8 +1403,7 @@ export const TransformPage = ({
           <p className="mt-1 text-sm text-muted">
             Mirror a job on the <span className="text-fg/90">same station</span> — output keeps the
             same <span className="font-mono text-fg/80">///USER</span>. Choose Left or Right for the
-            demo image. Prefer cartesian USER/BASE backups; PULSE converts via FK then mirrors.
-            Active job:{" "}
+            demo image. Prefer cartesian USER/BASE; IK gates Write like Station flip. Active job:{" "}
             <span className="font-mono text-fg/90">{displayName ?? "none"}</span>
           </p>
           <div className="mt-3 flex flex-wrap gap-3">
@@ -1561,12 +1604,12 @@ export const TransformPage = ({
           className="rounded border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn"
           role="status"
         >
-          Save is blocked until every flipped point is reachable and within pulse limits.
+          Save is blocked until every mirrored/flipped point is reachable and within pulse limits.
         </p>
       ) : null}
 
       {reachReport.length > 0 ? (
-        <div className="rounded border border-border bg-bg/50 p-3" aria-label="Station flip reach report">
+        <div className="rounded border border-border bg-bg/50 p-3" aria-label="Reach / RCONF report">
           <h2 className="text-sm font-semibold text-fg">Reach / RCONF report</h2>
           <p className="mt-1 text-xs text-muted">
             {reachReport.filter((row) => row.reachable).length}/{reachReport.length} reachable.

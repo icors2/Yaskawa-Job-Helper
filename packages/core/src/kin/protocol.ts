@@ -262,6 +262,16 @@ export interface ApplyStationFlipResult {
   recipe: StationFlipRecipe
 }
 
+/** Same-UF mirror apply result (IK + RCONF + write gate). */
+export interface ApplyMirrorResult {
+  poses: CartesianPose[]
+  points: StationFlipPointResult[]
+  retainedUserFrameId: number
+  saveBlocked: boolean
+  reachableCount: number
+  failedCount: number
+}
+
 export interface ReadUframeResult {
   frames: UserFrame[]
 }

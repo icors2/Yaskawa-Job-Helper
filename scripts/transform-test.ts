@@ -175,20 +175,73 @@ const run = async () => {
 
   let mirrorViaKin = false
   try {
+    const uframeText = readFixture("UFRAME.CND")
+    const buserMatch = (id: number): CartesianPose => {
+      const block = uframeText
+        .split("//UFRAME ")
+        .find((part) => part.startsWith(`${id}\n`) || part.startsWith(`${id}\r`))
+      if (!block) {
+        throw new Error(`UF${id} missing in fixture UFRAME.CND`)
+      }
+      const match = block.match(
+        /BUSER\s+(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+)/
+      )
+      if (!match) {
+        throw new Error(`BUSER for UF${id} not found`)
+      }
+      return {
+        x: Number.parseFloat(match[1]),
+        y: Number.parseFloat(match[2]),
+        z: Number.parseFloat(match[3]),
+        rx: Number.parseFloat(match[4]),
+        ry: Number.parseFloat(match[5]),
+        rz: Number.parseFloat(match[6])
+      }
+    }
     const mirrored = await previewMirrorJob({
       originalText: sourceText,
       plane: "YZ",
       sourceFrameId: 2,
+      sourceUf: buserMatch(2),
       sourceLabel: "USER_CART_S1.JBI"
     })
     const mirroredActual = collectUserPoses(mirrored.after)
     assert(mirroredActual.userId === 2, "mirror preview keeps ///USER 2")
     assert(mirrored.rconfReviewRequired === true, "mirror sets RCONF review")
+    assert(typeof mirrored.saveBlocked === "boolean", "mirror returns saveBlocked")
+    assert(mirrored.reachReport.length === mirrored.poseCount, "mirror reach report per pose")
+    assert(mirrored.after.includes("///RCONF"), "mirror emits RCONF groups")
+    const mirrorJob = parseJob(mirrored.after)
+    const mirrorVars = mirrorJob.posGroups.flatMap((g) => g.vars)
+    assert(
+      mirrorVars.every((v, i) => v.kind === "P" && v.index === 105 + i),
+      "mirror preserves P00105..P00108 kinds/indices"
+    )
     assertPosesClose(mirroredActual.poses, mirrorExpected.poses, "mirror preview vs MYZ fixture")
+
+    const cSource = readFixture("USER_CART_C_S1.JBI")
+    const cMirrored = await previewMirrorJob({
+      originalText: cSource,
+      plane: "YZ",
+      sourceFrameId: 2,
+      sourceUf: buserMatch(2),
+      sourceLabel: "USER_CART_C_S1.JBI"
+    })
+    const cVars = parseJob(cMirrored.after)
+      .posGroups.flatMap((g) => g.vars)
+      .filter((v) => v.kind === "C" || v.kind === "P")
+    assert(cVars.length === 4, "C-fixture mirror keeps 4 pos vars")
+    assert(
+      cVars.every((v, i) => v.kind === "C" && v.index === i),
+      "mirror preserves C00000..C00003 (never C→P)"
+    )
+    assert(!cMirrored.after.includes("P00000="), "mirrored C job has no P00000 rows")
+    assert(cMirrored.after.includes("///RCONF"), "C-fixture mirror emits RCONF")
+
     mirrorViaKin = true
   } catch (error) {
     console.log(
-      `skip â€” sidecar mirror (${error instanceof Error ? error.message : String(error)}); fixture math still checked`
+      `skip — mirror IK (${error instanceof Error ? error.message : String(error)}); fixture math still checked`
     )
   }
 
@@ -199,10 +252,29 @@ const run = async () => {
     assertPosesClose(expected.poses, mirrorExpected.poses, `SSM ${tag} same math as MYZ`)
 
     if (mirrorViaKin) {
+      const uframeText = readFixture("UFRAME.CND")
+      const block = uframeText
+        .split("//UFRAME ")
+        .find((part) => part.startsWith("2\n") || part.startsWith("2\r"))
+      const match = block?.match(
+        /BUSER\s+(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+),(-?\d+\.\d+)/
+      )
+      if (!match) {
+        throw new Error("BUSER for UF2 not found for SSM")
+      }
+      const sourceUf: CartesianPose = {
+        x: Number.parseFloat(match[1]),
+        y: Number.parseFloat(match[2]),
+        z: Number.parseFloat(match[3]),
+        rx: Number.parseFloat(match[4]),
+        ry: Number.parseFloat(match[5]),
+        rz: Number.parseFloat(match[6])
+      }
       const ssm = await previewMirrorJob({
         originalText: sourceText,
         plane: "YZ",
         sourceFrameId: 2,
+        sourceUf,
         side,
         sourceLabel: "USER_CART_S1.JBI"
       })
